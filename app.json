@@ -1,0 +1,27 @@
+{
+  "expo": {
+    "name": "ConnectAllAngola",
+    "slug": "ConnectAllAngola",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/expo.icon/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/images/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/expo.icon/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      }
+    },
+    "web": {
+      "favicon": "./assets/expo.icon/favicon.png"
+    }
+  }
+}
