@@ -44,7 +44,7 @@ export default function WelcomeScreen() {
 
       <Animated.View style={[styles.logoContainer, { opacity: fadeAnim }]}>
         <Image
-          source={require('../../assets/logo.png')}
+          source={require('../../../assets/logo.png')}
           style={styles.logo}
           resizeMode="contain"
         />

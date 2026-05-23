@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "90320321734",
+    "project_id": "connectallangola",
+    "storage_bucket": "connectallangola.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:90320321734:android:56fff722b32691fa3a6bc7",
+        "android_client_info": {
+          "package_name": "com.connectallangola"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAtExwumCEEgEbPCRhebwDUk1fQEiB6AX4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
