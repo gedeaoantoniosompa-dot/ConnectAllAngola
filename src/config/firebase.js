@@ -3,7 +3,7 @@ import { getApps, initializeApp } from 'firebase/app';
 import { getAuth, getReactNativePersistence, initializeAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 
-const firebaseConfig = {
+export const firebaseConfig = {
   apiKey: "AIzaSyC2qcgZK-Ip_xBsdUewE_bsgd7BausAS4Y",
   authDomain: "connectallangola.firebaseapp.com",
   projectId: "connectallangola",
@@ -16,7 +16,6 @@ const app = getApps().length === 0
   ? initializeApp(firebaseConfig)
   : getApps()[0];
 
-// Evita erro de "auth already initialized"
 export const auth = getApps().length === 1 && !getApps()[0].name.includes('auth')
   ? initializeAuth(app, {
       persistence: getReactNativePersistence(AsyncStorage)
@@ -24,3 +23,5 @@ export const auth = getApps().length === 1 && !getApps()[0].name.includes('auth'
   : getAuth(app);
 
 export const db = getFirestore(app);
+
+export default app;

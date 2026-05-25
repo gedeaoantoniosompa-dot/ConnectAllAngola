@@ -1,7 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useState } from 'react';
+import { useRouter } from 'expo-router';
+import { collection, getDocs } from 'firebase/firestore';
+import { useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   FlatList,
+  Image,
   ScrollView,
   StyleSheet,
   Text,
@@ -10,6 +14,8 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { db } from '../../config/firebase';
+import { useUser } from '../../context/UserContext';
 
 const CATEGORIAS = [
   { id: '1',  nome: 'Tecnologia',       icon: 'hardware-chip-outline' },
@@ -28,30 +34,59 @@ const CATEGORIAS = [
   { id: '14', nome: 'Empreendedorismo', icon: 'rocket-outline' },
 ];
 
-const PESSOAS = [
-  { id: '1', nome: 'Ana Fernandes',  area: 'Engenharia',  cidade: 'Luanda'   },
-  { id: '2', nome: 'Carlos Mbemba',  area: 'Tecnologia',  cidade: 'Benguela' },
-  { id: '3', nome: 'Sofia Lopes',    area: 'Medicina',    cidade: 'Luanda'   },
-  { id: '4', nome: 'Pedro Neto',     area: 'Direito',     cidade: 'Huambo'   },
-];
-
 function getInitials(nome) {
-  const parts = nome.trim().split(' ');
+  const parts = (nome || 'U').trim().split(' ');
   if (parts.length === 1) return parts[0][0].toUpperCase();
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
 export default function ExploreScreen() {
+  const router = useRouter();
+  const { user } = useUser();
   const [pesquisa, setPesquisa] = useState('');
   const [tabActiva, setTabActiva] = useState('categorias');
+  const [todosUtilizadores, setTodosUtilizadores] = useState([]);
+  const [carregando, setCarregando] = useState(false);
+
+  // Carrega todos os utilizadores ao abrir o ecrã
+  useEffect(() => {
+    const carregar = async () => {
+      setCarregando(true);
+      try {
+        const snap = await getDocs(collection(db, 'users'));
+        const lista = snap.docs
+          .map(d => ({ uid: d.id, ...d.data() }))
+          .filter(u => u.uid !== user?.uid && u.nome); // exclui o próprio e sem nome
+        setTodosUtilizadores(lista);
+      } catch (err) {
+        console.log('Erro ao carregar utilizadores:', err);
+      } finally {
+        setCarregando(false);
+      }
+    };
+    carregar();
+  }, []);
 
   const categoriasFiltradas = CATEGORIAS.filter(c =>
     c.nome.toLowerCase().includes(pesquisa.toLowerCase())
   );
-  const pessoasFiltradas = PESSOAS.filter(p =>
-    p.nome.toLowerCase().includes(pesquisa.toLowerCase()) ||
-    p.area.toLowerCase().includes(pesquisa.toLowerCase())
+
+  const pessoasFiltradas = todosUtilizadores.filter(p =>
+    p.nome?.toLowerCase().includes(pesquisa.toLowerCase()) ||
+    p.area?.toLowerCase().includes(pesquisa.toLowerCase()) ||
+    p.cidade?.toLowerCase().includes(pesquisa.toLowerCase())
   );
+
+  const iniciarConversa = (utilizador) => {
+    router.push({
+      pathname: '/(main)/conversa',
+      params: {
+        outroUid: utilizador.uid,
+        outroNome: utilizador.nome || 'Utilizador',
+        outraFoto: utilizador.fotoURL || '',
+      },
+    });
+  };
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -73,7 +108,10 @@ export default function ExploreScreen() {
           placeholder="Pesquisar pessoas, áreas..."
           placeholderTextColor="#ABABAB"
           value={pesquisa}
-          onChangeText={setPesquisa}
+          onChangeText={(t) => {
+            setPesquisa(t);
+            if (t.length > 0) setTabActiva('pessoas');
+          }}
         />
         {pesquisa.length > 0 && (
           <TouchableOpacity onPress={() => setPesquisa('')}>
@@ -110,7 +148,15 @@ export default function ExploreScreen() {
           <Text style={styles.sectionLabel}>Áreas de actividade</Text>
           <View style={styles.grid}>
             {categoriasFiltradas.map(cat => (
-              <TouchableOpacity key={cat.id} style={styles.catCard} activeOpacity={0.7}>
+              <TouchableOpacity
+                key={cat.id}
+                style={styles.catCard}
+                activeOpacity={0.7}
+                onPress={() => {
+                  setPesquisa(cat.nome);
+                  setTabActiva('pessoas');
+                }}
+              >
                 <View style={styles.catIconWrap}>
                   <Ionicons name={cat.icon} size={16} color="#6B6B6B" />
                 </View>
@@ -119,234 +165,156 @@ export default function ExploreScreen() {
             ))}
           </View>
         </ScrollView>
+      ) : carregando ? (
+        <ActivityIndicator color="#1677F2" style={{ marginTop: 40 }} />
       ) : (
         <FlatList
           data={pessoasFiltradas}
-          keyExtractor={item => item.id}
+          keyExtractor={item => item.uid}
           showsVerticalScrollIndicator={false}
-          ListHeaderComponent={<Text style={styles.sectionLabel}>Sugestões</Text>}
+          ListHeaderComponent={
+            <Text style={styles.sectionLabel}>
+              {pesquisa ? `Resultados para "${pesquisa}"` : 'Sugestões'}
+            </Text>
+          }
           renderItem={({ item, index }) => (
             <View style={[
               styles.personCard,
               index === pessoasFiltradas.length - 1 && styles.personCardLast,
             ]}>
-              <View style={styles.avatar}>
-                <Text style={styles.avatarText}>{getInitials(item.nome)}</Text>
+              {/* Avatar */}
+              <View style={styles.avatarWrap}>
+                {item.fotoURL ? (
+                  <Image source={{ uri: item.fotoURL }} style={styles.avatarImage} />
+                ) : (
+                  <View style={styles.avatar}>
+                    <Text style={styles.avatarText}>{getInitials(item.nome)}</Text>
+                  </View>
+                )}
               </View>
+
+              {/* Info */}
               <View style={styles.personInfo}>
                 <Text style={styles.personName}>{item.nome}</Text>
                 <View style={styles.personMetaRow}>
-                  <View style={styles.areaBadge}>
-                    <Text style={styles.areaBadgeText}>{item.area}</Text>
-                  </View>
-                  <View style={styles.dot} />
-                  <Text style={styles.cidadeText}>{item.cidade}</Text>
+                  {item.area ? (
+                    <View style={styles.areaBadge}>
+                      <Text style={styles.areaBadgeText}>{item.area}</Text>
+                    </View>
+                  ) : null}
+                  {item.area && item.cidade ? <View style={styles.dot} /> : null}
+                  {item.cidade ? (
+                    <Text style={styles.cidadeText}>{item.cidade}</Text>
+                  ) : null}
                 </View>
               </View>
-              <TouchableOpacity style={styles.connectBtn} activeOpacity={0.7}>
-                <Text style={styles.connectBtnText}>Conectar</Text>
-              </TouchableOpacity>
+
+              {/* Botões */}
+              <View style={styles.botoesWrap}>
+                <TouchableOpacity
+                  style={styles.msgBtn}
+                  activeOpacity={0.7}
+                  onPress={() => iniciarConversa(item)}
+                >
+                  <Ionicons name="chatbubble-outline" size={13} color="#1677F2" />
+                  <Text style={styles.msgBtnText}>SMS</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.connectBtn} activeOpacity={0.7}>
+                  <Text style={styles.connectBtnText}>Conectar</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+          ListEmptyComponent={() => (
+            <View style={styles.emptyWrap}>
+              <Ionicons name="person-outline" size={40} color="#ABABAB" />
+              <Text style={styles.emptyText}>Nenhum utilizador encontrado</Text>
             </View>
           )}
         />
       )}
-
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: '#F5F4F2',
-  },
+  safe: { flex: 1, backgroundColor: '#F5F4F2' },
   header: {
-    paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingHorizontal: 20, paddingVertical: 16,
     backgroundColor: '#FFFFFF',
-    borderBottomWidth: 0.5,
-    borderBottomColor: '#E4E4E4',
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
+    borderBottomWidth: 0.5, borderBottomColor: '#E4E4E4',
+    flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between',
   },
-  title: {
-    fontSize: 21,
-    fontWeight: '500',
-    color: '#1A1A1A',
-    letterSpacing: -0.5,
-  },
-  subtitle: {
-    fontSize: 11,
-    color: '#ABABAB',
-    marginTop: 3,
-  },
+  title: { fontSize: 21, fontWeight: '500', color: '#1A1A1A', letterSpacing: -0.5 },
+  subtitle: { fontSize: 11, color: '#ABABAB', marginTop: 3 },
   searchWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    margin: 14,
-    marginBottom: 0,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderWidth: 0.5,
-    borderColor: '#E4E4E4',
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#FFFFFF', margin: 14, marginBottom: 0,
+    borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10,
+    borderWidth: 0.5, borderColor: '#E4E4E4',
   },
-  searchInput: {
-    flex: 1,
-    fontSize: 13,
-    color: '#1A1A1A',
-  },
+  searchInput: { flex: 1, fontSize: 13, color: '#1A1A1A' },
   tabsWrap: {
-    flexDirection: 'row',
-    margin: 14,
-    marginBottom: 0,
-    backgroundColor: '#EBEBEB',
-    borderRadius: 8,
-    padding: 3,
-    borderWidth: 0.5,
-    borderColor: '#E4E4E4',
+    flexDirection: 'row', margin: 14, marginBottom: 0,
+    backgroundColor: '#EBEBEB', borderRadius: 8, padding: 3,
+    borderWidth: 0.5, borderColor: '#E4E4E4',
   },
-  tab: {
-    flex: 1,
-    paddingVertical: 7,
-    alignItems: 'center',
-    borderRadius: 6,
-  },
-  tabActiva: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 0.5,
-    borderColor: '#E4E4E4',
-  },
-  tabText: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: '#888888',
-  },
-  tabTextActiva: {
-    color: '#1A1A1A',
-  },
+  tab: { flex: 1, paddingVertical: 7, alignItems: 'center', borderRadius: 6 },
+  tabActiva: { backgroundColor: '#FFFFFF', borderWidth: 0.5, borderColor: '#E4E4E4' },
+  tabText: { fontSize: 12, fontWeight: '500', color: '#888888' },
+  tabTextActiva: { color: '#1A1A1A' },
   sectionLabel: {
-    fontSize: 10,
-    fontWeight: '500',
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
-    color: '#ABABAB',
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 10,
+    fontSize: 10, fontWeight: '500', letterSpacing: 0.8,
+    textTransform: 'uppercase', color: '#ABABAB',
+    paddingHorizontal: 16, paddingTop: 16, paddingBottom: 10,
   },
-  grid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    paddingHorizontal: 16,
-    paddingBottom: 16,
-    gap: 8,
-  },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 16, paddingBottom: 16, gap: 8 },
   catCard: {
-    width: '47.5%',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    borderWidth: 0.5,
-    borderColor: '#E4E4E4',
-    padding: 13,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 11,
+    width: '47.5%', backgroundColor: '#FFFFFF',
+    borderRadius: 12, borderWidth: 0.5, borderColor: '#E4E4E4',
+    padding: 13, flexDirection: 'row', alignItems: 'center', gap: 11,
   },
   catIconWrap: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    backgroundColor: '#F0EFED',
-    alignItems: 'center',
-    justifyContent: 'center',
+    width: 32, height: 32, borderRadius: 8,
+    backgroundColor: '#F0EFED', alignItems: 'center', justifyContent: 'center',
   },
-  catNome: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: '#1A1A1A',
-    flexShrink: 1,
-    lineHeight: 16,
-  },
+  catNome: { fontSize: 12, fontWeight: '500', color: '#1A1A1A', flexShrink: 1, lineHeight: 16 },
   personCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 16,
-    paddingVertical: 13,
-    gap: 12,
-    borderBottomWidth: 0.5,
-    borderBottomColor: '#E4E4E4',
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#FFFFFF', paddingHorizontal: 16, paddingVertical: 13, gap: 12,
+    borderBottomWidth: 0.5, borderBottomColor: '#E4E4E4',
   },
-  personCardLast: {
-    borderBottomWidth: 0,
-  },
+  personCardLast: { borderBottomWidth: 0 },
+  avatarWrap: {},
   avatar: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: '#F0EFED',
-    borderWidth: 0.5,
-    borderColor: '#E4E4E4',
-    alignItems: 'center',
-    justifyContent: 'center',
+    width: 42, height: 42, borderRadius: 21,
+    backgroundColor: '#F0EFED', borderWidth: 0.5, borderColor: '#E4E4E4',
+    alignItems: 'center', justifyContent: 'center',
   },
-  avatarText: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: '#6B6B6B',
-    letterSpacing: 0.5,
-  },
-  personInfo: {
-    flex: 1,
-  },
-  personName: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: '#1A1A1A',
-  },
-  personMetaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    marginTop: 3,
-  },
+  avatarImage: { width: 42, height: 42, borderRadius: 21 },
+  avatarText: { fontSize: 13, fontWeight: '500', color: '#6B6B6B', letterSpacing: 0.5 },
+  personInfo: { flex: 1 },
+  personName: { fontSize: 13, fontWeight: '500', color: '#1A1A1A' },
+  personMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 3 },
   areaBadge: {
-    backgroundColor: '#F0EFED',
-    borderWidth: 0.5,
-    borderColor: '#E4E4E4',
-    borderRadius: 4,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
+    backgroundColor: '#F0EFED', borderWidth: 0.5, borderColor: '#E4E4E4',
+    borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2,
   },
-  areaBadgeText: {
-    fontSize: 10,
-    fontWeight: '500',
-    color: '#888888',
+  areaBadgeText: { fontSize: 10, fontWeight: '500', color: '#888888' },
+  dot: { width: 2, height: 2, borderRadius: 1, backgroundColor: '#ABABAB' },
+  cidadeText: { fontSize: 11, color: '#ABABAB' },
+  botoesWrap: { flexDirection: 'row', gap: 6, alignItems: 'center' },
+  msgBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    borderWidth: 1, borderColor: '#1677F2', borderRadius: 20,
+    paddingHorizontal: 10, paddingVertical: 5, backgroundColor: '#EEF4FF',
   },
-  dot: {
-    width: 2,
-    height: 2,
-    borderRadius: 1,
-    backgroundColor: '#ABABAB',
-  },
-  cidadeText: {
-    fontSize: 11,
-    color: '#ABABAB',
-  },
+  msgBtnText: { fontSize: 11, fontWeight: '600', color: '#1677F2' },
   connectBtn: {
-    borderWidth: 0.5,
-    borderColor: '#C8C8C8',
-    borderRadius: 20,
-    paddingHorizontal: 13,
-    paddingVertical: 5,
-    backgroundColor: 'transparent',
+    borderWidth: 0.5, borderColor: '#C8C8C8', borderRadius: 20,
+    paddingHorizontal: 13, paddingVertical: 5, backgroundColor: 'transparent',
   },
-  connectBtnText: {
-    fontSize: 11,
-    fontWeight: '500',
-    color: '#6B6B6B',
-  },
+  connectBtnText: { fontSize: 11, fontWeight: '500', color: '#6B6B6B' },
+  emptyWrap: { alignItems: 'center', paddingTop: 60, gap: 10 },
+  emptyText: { fontSize: 14, color: '#ABABAB' },
 });

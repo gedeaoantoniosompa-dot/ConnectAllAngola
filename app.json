@@ -15,8 +15,19 @@
       "adaptiveIcon": {
         "foregroundImage": "./assets/logo.png",
         "backgroundColor": "#ffffff"
-      }
+      },
+      "package": "com.anonymous.connectallangola"
     },
-    "plugins": ["expo-router"]
+    "plugins": [
+      "expo-router",
+      "expo-web-browser",
+      "@react-native-google-signin/google-signin"
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "287b53bb-5840-42d9-92ce-4058e5f22010"
+      }
+    }
   }
 }
