@@ -35,11 +35,18 @@ function tempoRelativo(timestamp) {
 
 export default function FeedScreen() {
   const router = useRouter();
-  const { user, perfil } = useUser();
+  const { user, perfil, carregando: authCarregando } = useUser();
   const [posts, setPosts] = useState([]);
   const [carregando, setCarregando] = useState(true);
 
+  // Só carrega posts depois do utilizador estar autenticado
   useEffect(() => {
+    if (authCarregando) return;
+    if (!user) {
+      setCarregando(false);
+      return;
+    }
+
     const q = query(collection(db, 'posts'), orderBy('timestamp', 'desc'));
     const unsub = onSnapshot(q, (snap) => {
       const dados = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -50,7 +57,7 @@ export default function FeedScreen() {
       setCarregando(false);
     });
     return unsub;
-  }, []);
+  }, [user, authCarregando]);
 
   const handleLike = async (post) => {
     if (!user) return;
@@ -198,7 +205,7 @@ export default function FeedScreen() {
             <Text style={styles.sectionTitle}>Publicações recentes</Text>
           </View>
 
-          {carregando ? (
+          {carregando || authCarregando ? (
             <ActivityIndicator color="#1677F2" style={{ marginTop: 20 }} />
           ) : posts.length === 0 ? (
             <View style={styles.emptyWrap}>
@@ -239,7 +246,6 @@ export default function FeedScreen() {
                     </TouchableOpacity>
                   </View>
 
-                  {/* Clica no texto para ver comentários */}
                   <TouchableOpacity onPress={() => abrirComentarios(post)} activeOpacity={0.9}>
                     <Text style={styles.postTexto}>{post.texto}</Text>
                   </TouchableOpacity>
@@ -251,7 +257,6 @@ export default function FeedScreen() {
                       </View>
                       <Text style={styles.postStatText}>{post.likes || 0} gostos</Text>
                     </View>
-                    {/* Clica nos comentários para abrir */}
                     <TouchableOpacity onPress={() => abrirComentarios(post)}>
                       <Text style={styles.postStatText}>{post.comentarios || 0} comentários</Text>
                     </TouchableOpacity>
@@ -265,7 +270,6 @@ export default function FeedScreen() {
                         color={jaDeuLike ? '#EF4444' : '#6B6B6B'} />
                       <Text style={[styles.postActionText, jaDeuLike && { color: '#EF4444' }]}>Gosto</Text>
                     </TouchableOpacity>
-                    {/* Botão comentar → abre ecrã de comentários */}
                     <TouchableOpacity style={styles.postAction} onPress={() => abrirComentarios(post)}>
                       <Ionicons name="chatbubble-outline" size={17} color="#6B6B6B" />
                       <Text style={styles.postActionText}>Comentar</Text>

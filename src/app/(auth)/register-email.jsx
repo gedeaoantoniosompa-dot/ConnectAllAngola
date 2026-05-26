@@ -77,7 +77,7 @@ export default function RegisterEmailScreen() {
             </TouchableOpacity>
 
             <View style={styles.header}>
-              <Text style={styles.title}>Criar conta{'\n'}com email 📧</Text>
+              <Text style={styles.title}>Criar conta{'\n'}com email </Text>
               <Text style={styles.subtitle}>Preenche os campos abaixo para te registares</Text>
             </View>
 

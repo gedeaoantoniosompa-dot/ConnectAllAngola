@@ -1,9 +1,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getApps, initializeApp } from 'firebase/app';
+import { getApp, getApps, initializeApp } from 'firebase/app';
 import { getAuth, getReactNativePersistence, initializeAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 
-export const firebaseConfig = {
+const firebaseConfig = {
   apiKey: "AIzaSyC2qcgZK-Ip_xBsdUewE_bsgd7BausAS4Y",
   authDomain: "connectallangola.firebaseapp.com",
   projectId: "connectallangola",
@@ -12,16 +12,23 @@ export const firebaseConfig = {
   appId: "1:90320321734:web:865cd2b8bf50a1b43a6bc7"
 };
 
+// Inicializa a app só uma vez
 const app = getApps().length === 0
   ? initializeApp(firebaseConfig)
-  : getApps()[0];
+  : getApp();
 
-export const auth = getApps().length === 1 && !getApps()[0].name.includes('auth')
-  ? initializeAuth(app, {
-      persistence: getReactNativePersistence(AsyncStorage)
-    })
-  : getAuth(app);
+// Inicializa o auth só uma vez com persistência AsyncStorage
+let auth;
+try {
+  auth = initializeAuth(app, {
+    persistence: getReactNativePersistence(AsyncStorage),
+  });
+} catch (e) {
+  // Já foi inicializado — reutiliza
+  auth = getAuth(app);
+}
 
-export const db = getFirestore(app);
+const db = getFirestore(app);
 
+export { auth, db };
 export default app;

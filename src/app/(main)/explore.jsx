@@ -48,15 +48,17 @@ export default function ExploreScreen() {
   const [todosUtilizadores, setTodosUtilizadores] = useState([]);
   const [carregando, setCarregando] = useState(false);
 
-  // Carrega todos os utilizadores ao abrir o ecrã
+  // ✅ CORRIGIDO: só carrega quando o utilizador está autenticado
   useEffect(() => {
+    if (!user) return; // aguarda autenticação antes de fazer query
+
     const carregar = async () => {
       setCarregando(true);
       try {
         const snap = await getDocs(collection(db, 'users'));
         const lista = snap.docs
           .map(d => ({ uid: d.id, ...d.data() }))
-          .filter(u => u.uid !== user?.uid && u.nome); // exclui o próprio e sem nome
+          .filter(u => u.uid !== user.uid && u.nome); // exclui o próprio e sem nome
         setTodosUtilizadores(lista);
       } catch (err) {
         console.log('Erro ao carregar utilizadores:', err);
@@ -64,8 +66,9 @@ export default function ExploreScreen() {
         setCarregando(false);
       }
     };
+
     carregar();
-  }, []);
+  }, [user]); // depende do user — só dispara quando autenticado
 
   const categoriasFiltradas = CATEGORIAS.filter(c =>
     c.nome.toLowerCase().includes(pesquisa.toLowerCase())
