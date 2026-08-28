@@ -56,18 +56,18 @@ import {
   TouchableWithoutFeedback,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { db, rtdb, storage } from '../../config/firebase';
+import { useUser } from '../../context/UserContext';
+import { usePresenca } from '../../hooks/usePresenca';
+import { usePrivacidade } from '../../hooks/usePrivacidade';
 import {
   ChannelProfileType,
   ClientRoleType,
   createAgoraRtcEngine,
   RtcSurfaceView,
   VideoSourceType,
-} from 'react-native-agora';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { db, rtdb, storage } from '../../config/firebase';
-import { useUser } from '../../context/UserContext';
-import { usePresenca } from '../../hooks/usePresenca';
-import { usePrivacidade } from '../../hooks/usePrivacidade';
+} from '../../services/agoraNative';
 import { enviarNotificacao } from '../../services/notificationService';
 
 const FUNDO_CHAT   = require('../../../assets/slideshow/fundo-chat.png');
@@ -540,7 +540,7 @@ export default function ConversaScreen() {
       const duracaoTexto = tempoChamada > 0
         ? `📞 Chamada de ${tipoChamada === 'video' ? 'vídeo' : 'voz'} • ${formatarTempo(tempoChamada)}`
         : `📵 Chamada perdida de ${tipoChamada === 'video' ? 'vídeo' : 'voz'}`;
-      
+
       await addDoc(collection(db, 'chats', chatId, 'messages'), {
         uid: user?.uid,
         tipo: 'chamada',
@@ -552,7 +552,7 @@ export default function ConversaScreen() {
         lida: false,
         entregue: outroOnline,
       }).catch(() => {});
-      
+
       await setDoc(doc(db, 'chats', chatId), {
         ultimaMensagem: duracaoTexto,
         ultimoTimestamp: serverTimestamp(),

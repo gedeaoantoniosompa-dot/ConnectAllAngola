@@ -26,16 +26,16 @@ import {
   TouchableWithoutFeedback,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { db } from '../../config/firebase';
+import { useUser } from '../../context/UserContext';
 import {
   ChannelProfileType,
   ClientRoleType,
   createAgoraRtcEngine,
   RtcSurfaceView,
   VideoSourceType,
-} from 'react-native-agora';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { db } from '../../config/firebase';
-import { useUser } from '../../context/UserContext';
+} from '../../services/agoraNative';
 
 const AGORA_APP_ID = '4e413d4d82d14eeeb5f36a3853c846a3';
 const { width: W, height: H } = Dimensions.get('window');

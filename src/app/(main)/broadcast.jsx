@@ -10,7 +10,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { RtcSurfaceView, VideoSourceType } from 'react-native-agora';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import FloatingHearts from '../../components/live/FloatingHearts';
 import LiveComments from '../../components/live/LiveComments';
@@ -19,13 +18,14 @@ import LiveStageStrip from '../../components/live/LiveStageStrip';
 import { pedirPermissoesMedia } from '../../config/utils/mediaPermissoes';
 import { useUser } from '../../context/UserContext';
 import { AgoraEngine } from '../../services/AgoraEngine';
+import { RtcSurfaceView, VideoSourceType } from '../../services/agoraNative';
 import {
-    definirHostUidNumerico,
-    ouvirLive,
-    ouvirPalco,
-    ouvirPedidosPendentes,
-    removerDoPalco,
-    responderPedido,
+  definirHostUidNumerico,
+  ouvirLive,
+  ouvirPalco,
+  ouvirPedidosPendentes,
+  removerDoPalco,
+  responderPedido,
 } from '../../services/liveInteracoesService';
 import { criarLive, obterTokenAgora, terminarLive, uidNumericoDe } from '../../services/livesService';
 
