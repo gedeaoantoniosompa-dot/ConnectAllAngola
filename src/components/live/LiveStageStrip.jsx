@@ -6,7 +6,7 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { RtcSurfaceView, VideoSourceType } from 'react-native-agora';
+import { RtcSurfaceView, VideoSourceType } from '../../services/agoraNative';
 
 export default function LiveStageStrip({ convidados, souHost, onRemover }) {
   if (!convidados || convidados.length === 0) return null;
