@@ -2,18 +2,14 @@
  * src/services/AgoraEngine.js — ConnectAll Angola
  * Singleton global do Agora RTC
  * Partilhado entre Feira do Saber, Sala de Entrevista e Lives
+ *
+ * NOTA: já não faz require('react-native-agora') diretamente. Importa de
+ * './agoraNative', que tem uma versão .js (nativa, usa o SDK real) e uma
+ * versão .web.js (stub vazio) — assim o Metro nunca tenta empacotar o
+ * módulo nativo do Agora na build web, o que antes fazia a build falhar.
  */
 
-let createAgoraRtcEngine = null;
-let ClientRoleType       = null;
-let ChannelProfileType   = null;
-
-try {
-  const agora = require('react-native-agora');
-  createAgoraRtcEngine = agora.createAgoraRtcEngine;
-  ClientRoleType       = agora.ClientRoleType;
-  ChannelProfileType   = agora.ChannelProfileType;
-} catch (_) {}
+import { ChannelProfileType, ClientRoleType, createAgoraRtcEngine } from './agoraNative';
 
 const AGORA_APP_ID = '4e413d4d82d14eeeb5f36a3853c846a3';
 

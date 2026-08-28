@@ -2,6 +2,10 @@
  * sala-entrevista.jsx — ConnectAll Angola
  * Tela 1: Lobby (recrutador vê opções, candidato entra com código)
  * Tela 2: Sala activa com Agora RTC
+ *
+ * NOTA: o vídeo já não importa `react-native-agora` diretamente — usa o
+ * componente AgoraSurface (que tem versão .native.jsx e .web.jsx), para a
+ * build web não tentar empacotar o módulo nativo do Agora.
  */
 
 import { Ionicons } from '@expo/vector-icons';
@@ -44,8 +48,8 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { RtcSurfaceView, VideoSourceType } from 'react-native-agora';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import AgoraSurface, { VideoSourceType } from '../../components/live/AgoraSurface';
 import { app, db } from '../../config/firebase';
 import { useUser } from '../../context/UserContext';
 import { AgoraEngine } from '../../services/AgoraEngine';
@@ -1179,7 +1183,11 @@ export default function SalaEntrevistaScreen() {
       <View style={es.areaVideo}>
         {remotos.length > 0 ? (
           <View style={es.videoRemotoWrap}>
-            <RtcSurfaceView style={es.videoRemoto} canvas={{ uid: remotos[0].uid, sourceType: VideoSourceType.VideoSourceRemote }} />
+            <AgoraSurface
+              style={es.videoRemoto}
+              uid={remotos[0].uid}
+              sourceType={VideoSourceType.VideoSourceRemote}
+            />
             <View style={es.videoRemotoOverlay}><Text style={es.videoNome}>{remotos[0].nome}</Text></View>
           </View>
         ) : (
@@ -1203,7 +1211,11 @@ export default function SalaEntrevistaScreen() {
         {/* Vídeo local */}
         <TouchableOpacity style={es.videoLocalWrap} onPress={() => { AgoraEngine.switchCamera(); setCamaraAtiva(p => p); }} activeOpacity={0.9}>
           {camaraAtiva ? (
-            <RtcSurfaceView style={es.videoLocal} canvas={{ uid: 0, sourceType: VideoSourceType.VideoSourceCamera }} />
+            <AgoraSurface
+              style={es.videoLocal}
+              uid={0}
+              sourceType={VideoSourceType.VideoSourceCamera}
+            />
           ) : (
             <View style={es.videoLocalAvatarWrap}>
               {minhaFoto ? <Image source={{ uri: minhaFoto }} style={es.videoLocalAvatar} /> : (

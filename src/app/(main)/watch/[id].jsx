@@ -5,13 +5,17 @@
 // contagem real de ouvintes. Inclui as interações sociais estilo TikTok
 // LIVE: comentários em tempo real, pedir para subir ao palco como
 // co-apresentador, corações/gostos animados e partilha da live.
+//
+// NOTA: o vídeo já não importa `react-native-agora` diretamente — usa o
+// componente AgoraSurface (que tem versão .native.jsx e .web.jsx), para a
+// build web não tentar empacotar o módulo nativo do Agora.
 
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { RtcSurfaceView, VideoSourceType } from 'react-native-agora';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import AgoraSurface, { VideoSourceType } from '../../../components/live/AgoraSurface';
 import FloatingHearts from '../../../components/live/FloatingHearts';
 import LiveComments from '../../../components/live/LiveComments';
 import LiveShareSheet from '../../../components/live/LiveShareSheet';
@@ -20,13 +24,13 @@ import { pedirPermissoesMedia } from '../../../config/utils/mediaPermissoes';
 import { useUser } from '../../../context/UserContext';
 import { AgoraEngine } from '../../../services/AgoraEngine';
 import {
-    cancelarPedido,
-    ouvirLive,
-    ouvirMeuPedido,
-    ouvirPalco,
-    pedirParaSubir,
-    reagirLive,
-    sairDoPalco,
+  cancelarPedido,
+  ouvirLive,
+  ouvirMeuPedido,
+  ouvirPalco,
+  pedirParaSubir,
+  reagirLive,
+  sairDoPalco,
 } from '../../../services/liveInteracoesService';
 import { entrarComoOuvinte, obterTokenAgora, sairComoOuvinte, uidNumericoDe } from '../../../services/livesService';
 export default function WatchScreen() {
@@ -240,9 +244,10 @@ export default function WatchScreen() {
   return (
     <View style={styles.container}>
       {hostConectado && mainVideoUid != null ? (
-        <RtcSurfaceView
+        <AgoraSurface
           style={StyleSheet.absoluteFill}
-          canvas={{ uid: mainVideoUid, sourceType: VideoSourceType.VideoSourceRemote }}
+          uid={mainVideoUid}
+          sourceType={VideoSourceType.VideoSourceRemote}
         />
       ) : (
         <View style={styles.aguardando}>
@@ -257,9 +262,10 @@ export default function WatchScreen() {
       {/* O meu próprio vídeo, quando estou no palco como convidado */}
       {souConvidadoAtivo && (
         <View style={styles.meuPalcoWrap}>
-          <RtcSurfaceView
+          <AgoraSurface
             style={styles.meuPalcoVideo}
-            canvas={{ uid: 0, sourceType: VideoSourceType.VideoSourceCamera }}
+            uid={0}
+            sourceType={VideoSourceType.VideoSourceCamera}
           />
           <View style={styles.meuPalcoControles}>
             <TouchableOpacity style={styles.miniBtn} onPress={alternarMicrofone}>
