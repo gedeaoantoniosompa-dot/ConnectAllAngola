@@ -41,3 +41,15 @@ example
 # generated native folders
 /ios
 /android
+
+# segredos e credenciais
+.env
+.env.*
+functions/serviceAccountKey.json
+
+# outros ficheiros locais
+debug.log
+*.log
+.idea/
+.npmrc
+.agents/

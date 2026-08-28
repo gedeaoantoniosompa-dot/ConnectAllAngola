@@ -1,0 +1,14 @@
+node_modules/
+*.local
+# segredos e credenciais
+.env
+.env.*
+functions/.env
+functions/serviceAccountKey.json
+
+# outros ficheiros locais que não devem ir para o repositório
+debug.log
+*.log
+.idea/
+.npmrc
+.agents/

@@ -1,33 +1,113 @@
 {
   "expo": {
-    "name": "ConnectAllAngola",
+    "name": "ConnectAll Angola",
     "slug": "connectallangola",
     "scheme": "connectallangola",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/logo.png",
-    "splash": {
-      "image": "./assets/logo.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+    "icon": "./assets/logo-quadrado.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.connectallangola",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "Precisamos do microfone para as salas de voz ao vivo, chamadas e transmissões.",
+        "NSCameraUsageDescription": "Precisamos da câmara para videochamadas e transmissões ao vivo."
+      }
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/logo.png",
+        "foregroundImage": "./assets/logo-quadrado.png",
         "backgroundColor": "#ffffff"
       },
-      "package": "com.anonymous.connectallangola"
+      "package": "com.connectallangola",
+      "googleServicesFile": "./google-services.json",
+      "permissions": [
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
+        "android.permission.ACCESS_MEDIA_LOCATION",
+        "android.permission.READ_MEDIA_VIDEO",
+        "android.permission.READ_MEDIA_AUDIO",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+      ]
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static",
+      "favicon": "./assets/logo-quadrado.png"
     },
     "plugins": [
       "expo-router",
       "expo-web-browser",
-      "@react-native-google-signin/google-signin"
+      "expo-build-properties",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/logo-quadrado.png",
+          "color": "#1677F2",
+          "defaultChannel": "default"
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Permitir acesso às fotos para partilhar histórias.",
+          "cameraPermission": "Permitir acesso à câmara para tirar fotos."
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Permitir acesso às fotos.",
+          "savePhotosPermission": "Permitir guardar fotos.",
+          "isAccessMediaLocationEnabled": true
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Precisamos da câmara para transmitires ao vivo.",
+          "microphonePermission": "Precisamos do microfone para transmitires ao vivo.",
+          "recordAudioAndroid": true
+        }
+      ],
+      "expo-audio",
+      "expo-asset",
+      "expo-image",
+      "expo-sharing",
+      "expo-font",
+      "expo-splash-screen",
+      "expo-status-bar",
+      "expo-secure-store",
+      "expo-video",
+      "@react-native-community/datetimepicker",
+      "react-native-video"
     ],
     "extra": {
       "router": {},
+      "extra": {
+        "eas": {
+          "projectId": "560ef21c-da16-44c1-b429-8e9fcbfc436f"
+        }
+      },
       "eas": {
-        "projectId": "287b53bb-5840-42d9-92ce-4058e5f22010"
+        "projectId": "560ef21c-da16-44c1-b429-8e9fcbfc436f"
       }
-    }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/560ef21c-da16-44c1-b429-8e9fcbfc436f"
+    },
+    "owner": "mayangue-service"
   }
 }

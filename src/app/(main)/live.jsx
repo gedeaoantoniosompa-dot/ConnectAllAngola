@@ -1,87 +1,124 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useState } from 'react';
+import { useRouter } from 'expo-router';
+import { useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useUser } from '../../context/UserContext';
+import {
+  ativarLembrete,
+  desativarLembrete,
+  ouvirLivesAgendadas,
+  ouvirLivesAtivas,
+} from '../../services/livesService';
 
 const CATEGORIAS = ['Todas', 'Tecnologia', 'Negócios', 'Saúde', 'Educação', 'Arte'];
-
-const LIVES = [
-  {
-    id: '1',
-    titulo: 'O futuro das startups em Angola 🚀',
-    host: 'Carlos Mbemba',
-    cargo: 'CEO · TechAgro Angola',
-    area: 'Tecnologia',
-    ouvintes: 1240,
-    ao_vivo: true,
-    cor: '#1677F2',
-    destaque: true,
-  },
-  {
-    id: '2',
-    titulo: 'Saúde mental no ambiente de trabalho',
-    host: 'Sofia Lopes',
-    cargo: 'Psicóloga Clínica',
-    area: 'Saúde',
-    ouvintes: 890,
-    ao_vivo: true,
-    cor: '#EC4C89',
-    destaque: false,
-  },
-  {
-    id: '3',
-    titulo: 'Como captar investimento para o teu negócio',
-    host: 'Pedro Neto',
-    cargo: 'Investidor · Angola Ventures',
-    area: 'Negócios',
-    ouvintes: 654,
-    ao_vivo: true,
-    cor: '#6A11CB',
-    destaque: false,
-  },
-  {
-    id: '4',
-    titulo: 'Engenharia Civil em Angola — oportunidades',
-    host: 'Ana Fernandes',
-    cargo: 'Engenheira Civil Sénior',
-    area: 'Educação',
-    ouvintes: 0,
-    ao_vivo: false,
-    cor: '#FF8C00',
-    destaque: false,
-    hora: 'Hoje às 19:00',
-  },
-  {
-    id: '5',
-    titulo: 'Design gráfico para marcas angolanas',
-    host: 'Lucas Ferreira',
-    cargo: 'Designer · Creative Studio',
-    area: 'Arte',
-    ouvintes: 0,
-    ao_vivo: false,
-    cor: '#0D9488',
-    destaque: false,
-    hora: 'Amanhã às 15:00',
-  },
-];
+const CORES = ['#1677F2', '#EC4C89', '#6A11CB', '#FF8C00', '#0D9488'];
 
 export default function LiveScreen() {
+  const router = useRouter();
+  const { user } = useUser();
+
   const [categoriaActiva, setCategoriaActiva] = useState('Todas');
   const [tabActiva, setTabActiva] = useState('aoVivo');
 
-  const livesFiltradas = LIVES.filter(l => {
-    const matchCat = categoriaActiva === 'Todas' || l.area === categoriaActiva;
-    const matchTab = tabActiva === 'aoVivo' ? l.ao_vivo : !l.ao_vivo;
-    return matchCat && matchTab;
-  });
+  const [livesAtivas, setLivesAtivas] = useState([]);
+  const [livesAgendadas, setLivesAgendadas] = useState([]);
+  const [aCarregar, setACarregar] = useState(true);
 
-  const liveDestaque = LIVES.find(l => l.destaque);
+  const [modalAberto, setModalAberto] = useState(false);
+  const [novoTitulo, setNovoTitulo] = useState('');
+  const [novaArea, setNovaArea] = useState('Tecnologia');
+  const [aIniciar, setAIniciar] = useState(false);
+
+  const [lembretesAtivos, setLembretesAtivos] = useState({});
+
+  useEffect(() => {
+    const unsubAtivas = ouvirLivesAtivas((lista) => {
+      setLivesAtivas(lista);
+      setACarregar(false);
+    });
+    const unsubAgendadas = ouvirLivesAgendadas(setLivesAgendadas);
+    return () => {
+      unsubAtivas();
+      unsubAgendadas();
+    };
+  }, []);
+
+  const listaBase = tabActiva === 'aoVivo' ? livesAtivas : livesAgendadas;
+  const livesFiltradas = listaBase.filter(
+    (l) => categoriaActiva === 'Todas' || l.area === categoriaActiva
+  );
+
+  const liveDestaque = livesAtivas[0];
+
+  function abrirCriacao() {
+    setNovoTitulo('');
+    setNovaArea('Tecnologia');
+    setModalAberto(true);
+  }
+
+  function irAoVivo() {
+    if (!novoTitulo.trim()) return;
+    const cor = CORES[Math.floor(Math.random() * CORES.length)];
+    setModalAberto(false);
+    router.push({
+      pathname: '/broadcast',
+      params: { titulo: novoTitulo.trim(), area: novaArea, cor },
+    });
+  }
+
+  function assistir(live) {
+    router.push({
+      pathname: '/watch/[id]',
+      params: {
+        id: live.id,
+        channelName: live.channelName,
+        titulo: live.titulo,
+        hostNome: live.hostNome,
+        // hostUidNumerico é definido pelo host assim que entra no canal
+        // Agora (ver definirHostUidNumerico em liveInteracoesService.js).
+        // Pode ainda não existir nos primeiros instantes da live.
+        hostUidNumerico: live.hostUidNumerico != null ? String(live.hostUidNumerico) : undefined,
+        cor: live.cor,
+      },
+    });
+  }
+
+  async function alternarLembrete(live) {
+    const ativo = lembretesAtivos[live.id];
+    setLembretesAtivos((prev) => ({ ...prev, [live.id]: !ativo }));
+    try {
+      if (ativo) {
+        await desativarLembrete(live.id, user?.uid);
+      } else {
+        await ativarLembrete(live.id, user?.uid);
+      }
+    } catch {
+      // reverte em caso de falha
+      setLembretesAtivos((prev) => ({ ...prev, [live.id]: ativo }));
+    }
+  }
+
+  function formatarData(scheduledFor) {
+    if (!scheduledFor) return '';
+    const data = scheduledFor.toDate ? scheduledFor.toDate() : new Date(scheduledFor);
+    return data.toLocaleString('pt-AO', {
+      weekday: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  }
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -89,7 +126,7 @@ export default function LiveScreen() {
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.title}>Live</Text>
-        <TouchableOpacity style={styles.criarBtn}>
+        <TouchableOpacity style={styles.criarBtn} onPress={abrirCriacao}>
           <Ionicons name="radio" size={16} color="#fff" />
           <Text style={styles.criarBtnText}>Ir ao vivo</Text>
         </TouchableOpacity>
@@ -120,134 +157,233 @@ export default function LiveScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Live destaque */}
-        {tabActiva === 'aoVivo' && liveDestaque && (
-          <TouchableOpacity
-            style={[styles.destaqueCard, { backgroundColor: liveDestaque.cor }]}
-            activeOpacity={0.85}
-          >
-            <View style={styles.destaqueTop}>
-              <View style={styles.liveAoVivoBadge}>
-                <View style={styles.liveDotWhite} />
-                <Text style={styles.liveAoVivoText}>AO VIVO</Text>
-              </View>
-              <View style={styles.ouvintesWrap}>
-                <Ionicons name="people" size={14} color="#fff" />
-                <Text style={styles.ouvintesText}>{liveDestaque.ouvintes.toLocaleString()}</Text>
-              </View>
-            </View>
+        {aCarregar ? (
+          <View style={styles.empty}>
+            <ActivityIndicator color="#1677F2" />
+          </View>
+        ) : (
+          <>
+            {/* Live destaque */}
+            {tabActiva === 'aoVivo' && liveDestaque && (
+              <TouchableOpacity
+                style={[styles.destaqueCard, { backgroundColor: liveDestaque.cor }]}
+                activeOpacity={0.85}
+                onPress={() => assistir(liveDestaque)}
+              >
+                <View style={styles.destaqueTop}>
+                  <View style={styles.liveAoVivoBadge}>
+                    <View style={styles.liveDotWhite} />
+                    <Text style={styles.liveAoVivoText}>AO VIVO</Text>
+                  </View>
+                  <View style={styles.ouvintesWrap}>
+                    <Ionicons name="people" size={14} color="#fff" />
+                    <Text style={styles.ouvintesText}>
+                      {(liveDestaque.ouvintesCount || 0).toLocaleString()}
+                    </Text>
+                  </View>
+                </View>
 
-            <Text style={styles.destaqueTitulo}>{liveDestaque.titulo}</Text>
+                <Text style={styles.destaqueTitulo}>{liveDestaque.titulo}</Text>
 
-            <View style={styles.destaqueHost}>
-              <View style={styles.destaqueAvatar}>
-                <Text style={styles.destaqueAvatarText}>{liveDestaque.host[0]}</Text>
-              </View>
-              <View>
-                <Text style={styles.destaqueHostNome}>{liveDestaque.host}</Text>
-                <Text style={styles.destaqueHostCargo}>{liveDestaque.cargo}</Text>
-              </View>
-            </View>
-
-            <TouchableOpacity style={styles.assistirBtn}>
-              <Ionicons name="play-circle" size={18} color={liveDestaque.cor} />
-              <Text style={[styles.assistirBtnText, { color: liveDestaque.cor }]}>
-                Assistir agora
-              </Text>
-            </TouchableOpacity>
-          </TouchableOpacity>
-        )}
-
-        {/* Categorias */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ paddingHorizontal: 16, gap: 8, paddingVertical: 12 }}
-        >
-          {CATEGORIAS.map(cat => (
-            <TouchableOpacity
-              key={cat}
-              style={[styles.catChip, categoriaActiva === cat && styles.catChipActiva]}
-              onPress={() => setCategoriaActiva(cat)}
-            >
-              <Text style={[styles.catChipText, categoriaActiva === cat && styles.catChipTextActiva]}>
-                {cat}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-
-        {/* Lista de lives */}
-        <View style={styles.listaWrap}>
-          {livesFiltradas.length === 0 ? (
-            <View style={styles.empty}>
-              <Ionicons name="radio-outline" size={48} color="#ABABAB" />
-              <Text style={styles.emptyText}>Nenhuma live encontrada</Text>
-            </View>
-          ) : (
-            livesFiltradas.map(live => (
-              <TouchableOpacity key={live.id} style={styles.liveCard} activeOpacity={0.85}>
-
-                {/* Avatar e info */}
-                <View style={styles.liveCardTop}>
-                  <View style={[styles.liveAvatar, { backgroundColor: live.cor }]}>
-                    <Text style={styles.liveAvatarText}>{live.host[0]}</Text>
-                    {live.ao_vivo && (
-                      <View style={styles.liveAvatarBadge}>
-                        <Text style={styles.liveAvatarBadgeText}>LIVE</Text>
-                      </View>
+                <View style={styles.destaqueHost}>
+                  <View style={styles.destaqueAvatar}>
+                    <Text style={styles.destaqueAvatarText}>{liveDestaque.hostNome?.[0]}</Text>
+                  </View>
+                  <View>
+                    <Text style={styles.destaqueHostNome}>{liveDestaque.hostNome}</Text>
+                    {!!liveDestaque.hostCargo && (
+                      <Text style={styles.destaqueHostCargo}>{liveDestaque.hostCargo}</Text>
                     )}
                   </View>
-                  <View style={styles.liveInfo}>
-                    <Text style={styles.liveTitulo} numberOfLines={2}>{live.titulo}</Text>
-                    <Text style={styles.liveHostNome}>{live.host}</Text>
-                    <Text style={styles.liveHostCargo}>{live.cargo}</Text>
-                  </View>
                 </View>
 
-                {/* Footer */}
-                <View style={styles.liveCardBottom}>
-                  <View style={[styles.areaBadge, { backgroundColor: live.cor + '18' }]}>
-                    <Text style={[styles.areaBadgeText, { color: live.cor }]}>{live.area}</Text>
-                  </View>
-                  {live.ao_vivo ? (
-                    <View style={styles.ouvintesRow}>
-                      <Ionicons name="people-outline" size={13} color="#6B6B6B" />
-                      <Text style={styles.ouvintesRowText}>{live.ouvintes.toLocaleString()} a assistir</Text>
-                    </View>
-                  ) : (
-                    <View style={styles.ouvintesRow}>
-                      <Ionicons name="time-outline" size={13} color="#6B6B6B" />
-                      <Text style={styles.ouvintesRowText}>{live.hora}</Text>
-                    </View>
-                  )}
-                </View>
-
-                <TouchableOpacity style={[styles.liveBtn, { backgroundColor: live.ao_vivo ? live.cor : '#F5F7FA' }]}>
-                  {live.ao_vivo ? (
-                    <>
-                      <Ionicons name="play-circle" size={16} color="#fff" />
-                      <Text style={styles.liveBtnTextWhite}>Assistir</Text>
-                    </>
-                  ) : (
-                    <>
-                      <Ionicons name="notifications-outline" size={16} color="#1677F2" />
-                      <Text style={styles.liveBtnTextBlue}>Lembrar-me</Text>
-                    </>
-                  )}
+                <TouchableOpacity
+                  style={styles.assistirBtn}
+                  onPress={() => assistir(liveDestaque)}
+                >
+                  <Ionicons name="play-circle" size={18} color={liveDestaque.cor} />
+                  <Text style={[styles.assistirBtnText, { color: liveDestaque.cor }]}>
+                    Assistir agora
+                  </Text>
                 </TouchableOpacity>
-
               </TouchableOpacity>
-            ))
-          )}
-        </View>
+            )}
+
+            {/* Categorias */}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{ paddingHorizontal: 16, gap: 8, paddingVertical: 12 }}
+            >
+              {CATEGORIAS.map((cat) => (
+                <TouchableOpacity
+                  key={cat}
+                  style={[styles.catChip, categoriaActiva === cat && styles.catChipActiva]}
+                  onPress={() => setCategoriaActiva(cat)}
+                >
+                  <Text style={[styles.catChipText, categoriaActiva === cat && styles.catChipTextActiva]}>
+                    {cat}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            {/* Lista de lives */}
+            <View style={styles.listaWrap}>
+              {livesFiltradas.length === 0 ? (
+                <View style={styles.empty}>
+                  <Ionicons name="radio-outline" size={48} color="#ABABAB" />
+                  <Text style={styles.emptyText}>Nenhuma live encontrada</Text>
+                </View>
+              ) : (
+                livesFiltradas.map((live) => (
+                  <TouchableOpacity
+                    key={live.id}
+                    style={styles.liveCard}
+                    activeOpacity={0.85}
+                    onPress={() => tabActiva === 'aoVivo' && assistir(live)}
+                  >
+                    <View style={styles.liveCardTop}>
+                      <View style={[styles.liveAvatar, { backgroundColor: live.cor }]}>
+                        <Text style={styles.liveAvatarText}>{live.hostNome?.[0]}</Text>
+                        {tabActiva === 'aoVivo' && (
+                          <View style={styles.liveAvatarBadge}>
+                            <Text style={styles.liveAvatarBadgeText}>LIVE</Text>
+                          </View>
+                        )}
+                      </View>
+                      <View style={styles.liveInfo}>
+                        <Text style={styles.liveTitulo} numberOfLines={2}>{live.titulo}</Text>
+                        <Text style={styles.liveHostNome}>{live.hostNome}</Text>
+                        {!!live.hostCargo && (
+                          <Text style={styles.liveHostCargo}>{live.hostCargo}</Text>
+                        )}
+                      </View>
+                    </View>
+
+                    <View style={styles.liveCardBottom}>
+                      <View style={[styles.areaBadge, { backgroundColor: live.cor + '18' }]}>
+                        <Text style={[styles.areaBadgeText, { color: live.cor }]}>{live.area}</Text>
+                      </View>
+                      {tabActiva === 'aoVivo' ? (
+                        <View style={styles.ouvintesRow}>
+                          <Ionicons name="people-outline" size={13} color="#6B6B6B" />
+                          <Text style={styles.ouvintesRowText}>
+                            {(live.ouvintesCount || 0).toLocaleString()} a assistir
+                          </Text>
+                        </View>
+                      ) : (
+                        <View style={styles.ouvintesRow}>
+                          <Ionicons name="time-outline" size={13} color="#6B6B6B" />
+                          <Text style={styles.ouvintesRowText}>{formatarData(live.scheduledFor)}</Text>
+                        </View>
+                      )}
+                    </View>
+
+                    <TouchableOpacity
+                      style={[
+                        styles.liveBtn,
+                        { backgroundColor: tabActiva === 'aoVivo' ? live.cor : '#F5F7FA' },
+                      ]}
+                      onPress={() =>
+                        tabActiva === 'aoVivo' ? assistir(live) : alternarLembrete(live)
+                      }
+                    >
+                      {tabActiva === 'aoVivo' ? (
+                        <>
+                          <Ionicons name="play-circle" size={16} color="#fff" />
+                          <Text style={styles.liveBtnTextWhite}>Assistir</Text>
+                        </>
+                      ) : (
+                        <>
+                          <Ionicons
+                            name={lembretesAtivos[live.id] ? 'notifications' : 'notifications-outline'}
+                            size={16}
+                            color="#1677F2"
+                          />
+                          <Text style={styles.liveBtnTextBlue}>
+                            {lembretesAtivos[live.id] ? 'Lembrete activo' : 'Lembrar-me'}
+                          </Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                  </TouchableOpacity>
+                ))
+              )}
+            </View>
+          </>
+        )}
 
       </ScrollView>
 
       {/* FAB */}
-      <TouchableOpacity style={styles.fabBtn}>
+      <TouchableOpacity style={styles.fabBtn} onPress={abrirCriacao}>
         <Ionicons name="radio" size={24} color="#fff" />
       </TouchableOpacity>
+
+      {/* Modal de criação de live */}
+      <Modal visible={modalAberto} animationType="slide" transparent>
+        {/*
+          FIX definitivo: KeyboardAvoidingView em vez do cálculo manual
+          com Keyboard.addListener + Animated.Value.
+          O cálculo manual dava a altura "crua" do teclado, mas em
+          Android essa altura muitas vezes não conta a barra de
+          navegação/gestos, por isso o marginBottom ficava a curto e o
+          botão continuava tapado. O KeyboardAvoidingView trata disso
+          nativamente e sobe o conteúdo o suficiente.
+        */}
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : -50}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalCard}>
+              <Text style={styles.modalTitle}>Ir ao vivo</Text>
+
+              <TextInput
+                style={styles.modalInput}
+                placeholder="Sobre o que vais falar?"
+                value={novoTitulo}
+                onChangeText={setNovoTitulo}
+                maxLength={80}
+              />
+
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ gap: 8, paddingVertical: 4 }}
+              >
+                {CATEGORIAS.filter((c) => c !== 'Todas').map((cat) => (
+                  <TouchableOpacity
+                    key={cat}
+                    style={[styles.catChip, novaArea === cat && styles.catChipActiva]}
+                    onPress={() => setNovaArea(cat)}
+                  >
+                    <Text style={[styles.catChipText, novaArea === cat && styles.catChipTextActiva]}>
+                      {cat}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+
+              <View style={styles.modalBtnsRow}>
+                <TouchableOpacity style={styles.modalCancelarBtn} onPress={() => setModalAberto(false)}>
+                  <Text style={styles.modalCancelarText}>Cancelar</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.modalIniciarBtn, !novoTitulo.trim() && { opacity: 0.5 }]}
+                  disabled={!novoTitulo.trim() || aIniciar}
+                  onPress={irAoVivo}
+                >
+                  <Text style={styles.modalIniciarText}>Iniciar transmissão</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
 
     </SafeAreaView>
   );
@@ -358,4 +494,27 @@ const styles = StyleSheet.create({
     shadowColor: '#EC4C89', shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.4, shadowRadius: 12, elevation: 8,
   },
+  modalOverlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end',
+  },
+  modalCard: {
+    backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    padding: 20, paddingBottom: 20, gap: 14,
+  },
+  modalTitle: { fontSize: 18, fontWeight: '800', color: '#1F1F1F' },
+  modalInput: {
+    backgroundColor: '#F5F7FA', borderRadius: 12, paddingHorizontal: 14,
+    paddingVertical: 12, fontSize: 15, color: '#1F1F1F',
+  },
+  modalBtnsRow: { flexDirection: 'row', gap: 10, marginTop: 6 },
+  modalCancelarBtn: {
+    flex: 1, alignItems: 'center', justifyContent: 'center',
+    paddingVertical: 12, borderRadius: 20, backgroundColor: '#F5F7FA',
+  },
+  modalCancelarText: { color: '#6B6B6B', fontWeight: '700' },
+  modalIniciarBtn: {
+    flex: 2, alignItems: 'center', justifyContent: 'center',
+    paddingVertical: 12, borderRadius: 20, backgroundColor: '#EC4C89',
+  },
+  modalIniciarText: { color: '#fff', fontWeight: '800' },
 });

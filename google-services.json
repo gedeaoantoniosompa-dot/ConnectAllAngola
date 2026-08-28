@@ -1,6 +1,7 @@
 {
   "project_info": {
     "project_number": "90320321734",
+    "firebase_url": "https://connectallangola-default-rtdb.firebaseio.com",
     "project_id": "connectallangola",
     "storage_bucket": "connectallangola.firebasestorage.app"
   },
@@ -12,7 +13,20 @@
           "package_name": "com.connectallangola"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "90320321734-e3jvrkt9larcvs1j8ls67qus7fj72sd1.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.connectallangola",
+            "certificate_hash": "c9508da9c8350e06ec75fb5d83df10402c62886f"
+          }
+        },
+        {
+          "client_id": "90320321734-vqhghbin6ns5rkpnsqul14rf4kmmln79.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyAtExwumCEEgEbPCRhebwDUk1fQEiB6AX4"
@@ -20,7 +34,12 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "90320321734-vqhghbin6ns5rkpnsqul14rf4kmmln79.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }

@@ -1,0 +1,24 @@
+Plan aprovado (VideoPreview.jsx -> expo-video)
+
+Information Gathered:
+- `src/components/VideoPreview.jsx` currently imports `Video` from `react-native-video` and uses it for playback.
+- `src/components/PostMedia.jsx` uses `expo-video` (`useVideoPlayer`, `VideoView`) consistently for video playback.
+- `package.json` includes both `expo-video` and `react-native-video`, so switching removes inconsistency and aligns with the rest of the app; it also avoids cases where metro/runtime behavior differs.
+
+Plan:
+1) Replace `src/components/VideoPreview.jsx` implementation to use `expo-video`:
+   - Remove `import Video from 'react-native-video'`.
+   - Use `useVideoPlayer` + `VideoView`.
+   - Implement lazy mount: create player only when `shouldPlay` is true.
+   - Keep current UI: thumbnail/image before play, play button overlay, loading indicator while player loads.
+2) Ensure minimal props compatibility:
+   - Keep `videoUrl` and `thumbnailUrl` props.
+3) Run basic checks:
+   - `npm run lint` to ensure no TS/ESLint issues.
+
+Dependent Files to be edited:
+- `src/components/VideoPreview.jsx`
+
+Followup steps:
+- Run `npm run lint` and (if needed) `npm start` to verify runtime.
+

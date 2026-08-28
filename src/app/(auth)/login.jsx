@@ -1,11 +1,16 @@
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
-import { signInWithEmailAndPassword } from 'firebase/auth';
-import { useEffect, useRef, useState } from 'react';
+import { signInAnonymously, signInWithEmailAndPassword } from 'firebase/auth';
+import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
+import { getFunctions, httpsCallable } from 'firebase/functions';
+import React, { useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
-  Animated,
+  Image,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   ScrollView,
   StatusBar,
@@ -16,212 +21,353 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { auth } from '../../config/firebase';
+import { app, auth, db } from '../../config/firebase';
 
 export default function LoginScreen() {
   const router = useRouter();
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-  const slideAnim = useRef(new Animated.Value(30)).current;
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [autenticando, setAutenticando] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [remember, setRemember] = useState(false);
+  const [modalSaibaMais, setModalSaibaMais] = useState(false);
+
+  // ── Novo: estado de bloqueio ──────────────────────────────────────
+  const [bloqueioDefinitivo, setBloqueioDefinitivo] = useState(false);
 
   useEffect(() => {
-    Animated.parallel([
-      Animated.timing(fadeAnim, { toValue: 1, duration: 600, useNativeDriver: true }),
-      Animated.timing(slideAnim, { toValue: 0, duration: 600, useNativeDriver: true }),
-    ]).start();
+    const carregarDados = async () => {
+      try {
+        const emailGuardado = await AsyncStorage.getItem('login_email');
+        const rememberGuardado = await AsyncStorage.getItem('login_remember');
+        if (rememberGuardado === 'true' && emailGuardado) {
+          setEmail(emailGuardado);
+          setRemember(true);
+        }
+      } catch {}
+    };
+    carregarDados();
   }, []);
 
   const handleLogin = async () => {
-    if (!email || !password) {
-      Alert.alert('Erro', 'Preenche o email e a palavra-passe!');
+    if (!email.trim() || !password.trim()) {
+      Alert.alert('Atenção', 'Preencha todos os campos.');
       return;
     }
+
+    const emailLimpo = email.trim().toLowerCase();
     setLoading(true);
+    setBloqueioDefinitivo(false);
+
     try {
-      await signInWithEmailAndPassword(auth, email, password);
-      router.replace('/(main)/feed');
+      const functions = getFunctions(app, 'europe-west1');
+      const verificarBloqueio = httpsCallable(functions, 'verificarBloqueioLogin');
+      const registarTentativa = httpsCallable(functions, 'registarTentativaLogin');
+
+      // 1. Verifica se esta conta está actualmente bloqueada
+      const { data: estadoBloqueio } = await verificarBloqueio({ email: emailLimpo });
+
+      if (estadoBloqueio.bloqueado) {
+        setLoading(false);
+
+        // ── Bloqueio DEFINITIVO → navega para recuperação de conta ───
+        if (estadoBloqueio.definitivo) {
+          setBloqueioDefinitivo(true);
+          return;
+        }
+
+        // ── Bloqueio TEMPORÁRIO → alerta com minutos restantes ───────
+        Alert.alert(
+          'Conta temporariamente bloqueada',
+          `Demasiadas tentativas falhadas. Tenta novamente em ${estadoBloqueio.minutosRestantes} minutos, ou contacta o suporte para desbloqueio imediato.`,
+          [
+            { text: 'OK', style: 'cancel' },
+            { text: 'Contactar suporte', onPress: () => router.push('/(auth)/contactar-suporte') },
+          ]
+        );
+        return;
+      }
+
+      // 2. Tenta autenticar
+      try {
+        const credencial = await signInWithEmailAndPassword(auth, emailLimpo, password);
+
+        // Login bem-sucedido — reseta o contador de tentativas
+        await registarTentativa({ email: emailLimpo, sucesso: true });
+
+        // Se havia recuperação facial pendente, marca como concluída
+        // O trigger desbloquearAposRedefinicao irá processar e desbloquear
+        try {
+          await setDoc(
+            doc(db, 'redefinicoesSenha', credencial.user.uid),
+            { email: emailLimpo, concluido: true, data: serverTimestamp() },
+            { merge: true }
+          );
+        } catch { /* não crítico */ }
+
+        if (remember) {
+          await AsyncStorage.setItem('login_email', emailLimpo);
+          await AsyncStorage.setItem('login_remember', 'true');
+        } else {
+          await AsyncStorage.removeItem('login_email');
+          await AsyncStorage.setItem('login_remember', 'false');
+        }
+        // Redirecionamento continua a cargo do _layout.tsx
+
+      } catch (authError) {
+        setLoading(false);
+
+        // Login falhou — regista a tentativa falhada
+        const { data: resultado } = await registarTentativa({ email: emailLimpo, sucesso: false });
+
+        if (resultado.bloqueado) {
+          if (resultado.definitivo) {
+            // Bloqueio definitivo após esta tentativa
+            setBloqueioDefinitivo(true);
+          } else {
+            Alert.alert(
+              'Conta bloqueada',
+              `Excedeste o número de tentativas permitidas. A tua conta foi bloqueada por ${resultado.minutosRestantes} minutos. Para desbloqueio imediato, contacta o suporte.`,
+              [
+                { text: 'OK', style: 'cancel' },
+                { text: 'Contactar suporte', onPress: () => router.push('/(auth)/contactar-suporte') },
+              ]
+            );
+          }
+        } else {
+          let msg = 'Email ou palavra-passe incorrectos.';
+          if (resultado.restantes !== undefined) {
+            msg += ` Restam ${resultado.restantes} tentativa(s) antes do bloqueio temporário.`;
+          }
+          Alert.alert('Erro', msg);
+        }
+      }
+
     } catch (error) {
-      let msg = 'Erro ao entrar. Tenta novamente.';
-      if (error.code === 'auth/user-not-found') msg = 'Utilizador não encontrado.';
-      if (error.code === 'auth/wrong-password') msg = 'Palavra-passe incorrecta.';
-      if (error.code === 'auth/invalid-email') msg = 'Email inválido.';
-      Alert.alert('Erro', msg);
+      setLoading(false);
+      console.log('Erro verificação bloqueio:', error);
+      Alert.alert('Erro', 'Não foi possível processar o login. Verifica a tua ligação à internet.');
     }
-    setLoading(false);
   };
 
+  const entrarSemConta = async () => {
+    Alert.alert(
+      'Entrar sem conta',
+      'Poderás explorar a app, mas os teus dados não serão guardados. Desejas continuar?',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Continuar',
+          onPress: async () => {
+            setAutenticando(true);
+            try {
+              await signInAnonymously(auth);
+            } catch (error) {
+              Alert.alert('Erro', 'Não foi possível entrar anonimamente: ' + error.message);
+            } finally {
+              setAutenticando(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const abrirPolitica = (tipo) => {
+    router.push({ pathname: '/(auth)/politicas', params: { tipo } });
+  };
+
+  // ── Ecrã de bloqueio definitivo ───────────────────────────────────
+  if (bloqueioDefinitivo) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <StatusBar barStyle="dark-content" />
+        <View style={styles.bloqueioContainer}>
+          <View style={styles.bloqueioIconeWrap}>
+            <Ionicons name="shield-outline" size={56} color="#E00000" />
+          </View>
+          <Text style={styles.bloqueioTitulo}>Conta Bloqueada</Text>
+          <Text style={styles.bloqueioDesc}>
+            A tua conta foi bloqueada por motivos de segurança devido a múltiplas tentativas de acesso falhadas.{'\n\n'}
+            Para recuperares o acesso, precisamos de{' '}
+            <Text style={{ fontWeight: '800', color: '#1A202C' }}>verificar a tua identidade</Text>
+            {' '}com uma selfie e o teu Bilhete de Identidade.
+          </Text>
+          <TouchableOpacity
+            style={styles.btnRecuperar}
+            onPress={() => router.push({
+              pathname: '/(auth)/recuperar-conta',
+              params: { email: email.trim().toLowerCase() },
+            })}
+          >
+            <Ionicons name="shield-checkmark-outline" size={18} color="#FFF" />
+            <Text style={styles.btnRecuperarTxt}>Recuperar Conta</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.btnVoltarSec} onPress={() => setBloqueioDefinitivo(false)}>
+            <Text style={styles.btnVoltarSecTxt}>Voltar ao Login</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // ── Ecrã de login normal (igual ao original) ──────────────────────
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="dark-content" backgroundColor="#F8F8F8" />
-      <View style={styles.bgGradient} />
+      <StatusBar barStyle="dark-content" />
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <ScrollView
+          contentContainerStyle={styles.scrollContainer}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
 
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
-        <ScrollView contentContainerStyle={{ flexGrow: 1 }} keyboardShouldPersistTaps="handled">
-          <Animated.View style={[styles.container, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
+          <View style={styles.header}>
+            <Text style={styles.brandTitle}>
+              <Text style={{ color: '#000' }}>Connect</Text>
+              <Text style={{ color: '#FF3B30' }}>All</Text>
+            </Text>
+            <Image
+              source={require('../../../assets/logo2.png')}
+              style={styles.logo}
+              resizeMode="contain"
+            />
+          </View>
 
-            <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-              <Text style={styles.backIcon}>←</Text>
+          <TouchableOpacity
+            style={[styles.btnAnonimo, autenticando && { opacity: 0.6 }]}
+            activeOpacity={0.85}
+            onPress={entrarSemConta}
+            disabled={autenticando}
+          >
+            <Ionicons name="eye-outline" size={20} color="#6B6B6B" />
+            <Text style={styles.btnAnonimoText}>Explorar sem conta</Text>
+          </TouchableOpacity>
+
+          <Text style={styles.legalText}>
+            Ao clicar em Continuar, você aceita o{' '}
+            <Text style={styles.link} onPress={() => abrirPolitica('contrato')}>Contrato do Usuário</Text>,{' '}
+            <Text style={styles.link} onPress={() => abrirPolitica('privacidade')}>Política de Privacidade</Text> e a{' '}
+            <Text style={styles.link} onPress={() => abrirPolitica('cookies')}>Política de Cookies</Text>.
+          </Text>
+
+          <View style={styles.dividerContainer}>
+            <View style={styles.line} />
+            <Text style={styles.orText}>ou</Text>
+            <View style={styles.line} />
+          </View>
+
+          <TextInput
+            style={styles.input}
+            placeholder="E-mail"
+            keyboardType="email-address"
+            autoCapitalize="none"
+            autoComplete="email"
+            textContentType="emailAddress"
+            placeholderTextColor="#666"
+            value={email}
+            onChangeText={setEmail}
+          />
+
+          <View style={styles.passwordContainer}>
+            <TextInput
+              style={{ flex: 1, fontSize: 16 }}
+              placeholder="Senha"
+              secureTextEntry={!showPassword}
+              autoComplete="password"
+              textContentType="password"
+              placeholderTextColor="#666"
+              value={password}
+              onChangeText={setPassword}
+            />
+            <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
+              <Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={22} color="#666" />
             </TouchableOpacity>
+          </View>
 
-            <View style={styles.header}>
-              <Text style={styles.title}>Bem-vindo(a){'\n'}de volta! 👋</Text>
-              <Text style={styles.subtitle}>Entra na tua conta ConnectAll Angola</Text>
-            </View>
+          <TouchableOpacity style={styles.checkboxRow} onPress={() => setRemember(!remember)}>
+            <Ionicons name={remember ? 'checkbox' : 'square-outline'} size={22} color={remember ? '#1677F2' : '#666'} />
+            <Text style={styles.checkboxText}>
+              Lembrar o meu e-mail.{' '}
+              <Text style={styles.link} onPress={() => setModalSaibaMais(true)}>Saiba mais</Text>
+            </Text>
+          </TouchableOpacity>
 
-            <View style={styles.form}>
+          <TouchableOpacity style={styles.forgotPass} onPress={() => router.push('/(auth)/forgot-password')}>
+            <Text style={styles.forgotPassText}>Esqueceu a senha?</Text>
+          </TouchableOpacity>
 
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>Email</Text>
-                <View style={styles.inputWrap}>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="o_teu_email@gmail.com"
-                    placeholderTextColor="#ABABAB"
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                    value={email}
-                    onChangeText={setEmail}
-                  />
-                </View>
-              </View>
+          <TouchableOpacity style={styles.btnPrimary} onPress={handleLogin} disabled={loading}>
+            {loading ? <ActivityIndicator color="#FFF" /> : <Text style={styles.btnPrimaryText}>Continuar</Text>}
+          </TouchableOpacity>
 
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>Palavra-passe</Text>
-                <View style={styles.inputWrap}>
-                  <TextInput
-                    style={[styles.input, { flex: 1 }]}
-                    placeholder="A tua palavra-passe"
-                    placeholderTextColor="#ABABAB"
-                    secureTextEntry={!showPassword}
-                    value={password}
-                    onChangeText={setPassword}
-                  />
-                  <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
-                    {showPassword ? (
-                      <Ionicons name="eye" size={24} color="gray" style={styles.eyeIcon} />
-                    ) : (
-                      <Ionicons name="eye-off" size={24} color="gray" style={styles.eyeIcon} />
-                    )}
-                  </TouchableOpacity>
-                </View>
-              </View>
+          <TouchableOpacity style={styles.criarContaBtn} onPress={() => router.push('/(auth)/register')}>
+            <Text style={styles.criarContaText}>
+              Não tens conta? <Text style={styles.criarContaLink}>Criar conta</Text>
+            </Text>
+          </TouchableOpacity>
 
-              <TouchableOpacity style={styles.forgotWrap}>
-                <Text style={styles.forgotText}>Esqueceste a palavra-passe?</Text>
-              </TouchableOpacity>
-
-            </View>
-
-            <TouchableOpacity
-              style={[styles.btnPrimary, loading && { opacity: 0.7 }]}
-              activeOpacity={0.85}
-              onPress={handleLogin}
-              disabled={loading}
-            >
-              <Text style={styles.btnPrimaryText}>
-                {loading ? 'A entrar...' : 'Entrar'}
-              </Text>
-            </TouchableOpacity>
-
-            <View style={styles.divider}>
-              <View style={styles.dividerLine} />
-              <Text style={styles.dividerText}>ou continua com</Text>
-              <View style={styles.dividerLine} />
-            </View>
-
-            <View style={styles.socialButtons}>
-
-              <TouchableOpacity style={styles.socialBtn}>
-                <Text style={styles.socialBtnText}>
-                  <Text style={{ color: '#4285F4' }}>G</Text>
-                  <Text style={{ color: '#EA4335' }}>o</Text>
-                  <Text style={{ color: '#FBBC05' }}>o</Text>
-                  <Text style={{ color: '#4285F4' }}>g</Text>
-                  <Text style={{ color: '#34A853' }}>l</Text>
-                  <Text style={{ color: '#EA4335' }}>e</Text>
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity style={[styles.socialBtn, styles.socialBtnLi]}>
-                <View style={styles.btnInner}>
-                  <View style={styles.linkedinIcon}>
-                    <Text style={styles.linkedinIn}>in</Text>
-                  </View>
-                  <Text style={[styles.socialBtnText, { color: '#fff' }]}>LinkedIn</Text>
-                </View>
-              </TouchableOpacity>
-
-            </View>
-
-            <View style={styles.footer}>
-              <TouchableOpacity onPress={() => router.push('/register')}>
-                <Text style={styles.footerText}>
-                  Não tens conta? <Text style={styles.footerLink}>Cria uma agora</Text>
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-          </Animated.View>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      <Modal visible={modalSaibaMais} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitulo}>Lembrar e-mail de acesso</Text>
+            <Text style={styles.modalTexto}>
+              Ao activar esta opção, o teu e-mail será guardado de forma segura no teu dispositivo para não precisares introduzi-lo novamente.{'\n\n'}
+              A tua palavra-passe é gerida pela <Text style={{ fontWeight: '700' }}>Google Password Manager</Text>, que oferece armazenamento seguro e preenchimento automático directamente pelo teu dispositivo Android.{'\n\n'}
+              Os teus dados <Text style={{ fontWeight: '700' }}>não são partilhados</Text> com terceiros. Podes desactivar esta opção a qualquer momento.
+            </Text>
+            <TouchableOpacity style={styles.modalBtn} onPress={() => setModalSaibaMais(false)}>
+              <Text style={styles.modalBtnText}>Entendi</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#F8F8F8' },
-  bgGradient: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#F0EEF8' },
-  container: { flex: 1, paddingHorizontal: 28, paddingTop: 20, paddingBottom: 40 },
-  backBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', marginBottom: 24 },
-  backIcon: { fontSize: 24, color: '#1F1F1F' },
-  header: { marginBottom: 36 },
-  title: { fontSize: 30, fontWeight: '800', color: '#1F1F1F', lineHeight: 38, marginBottom: 8 },
-  subtitle: { fontSize: 15, color: '#6B6B6B' },
-  form: { marginBottom: 24 },
-  inputGroup: { marginBottom: 20 },
-  label: { fontSize: 13, fontWeight: '600', color: '#1F1F1F', marginBottom: 8 },
-  inputWrap: {
-    flexDirection: 'row', alignItems: 'center',
-    backgroundColor: '#fff', borderRadius: 14,
-    paddingHorizontal: 16, paddingVertical: 4,
-    borderWidth: 1, borderColor: '#EAEAEA',
-    shadowColor: '#000', shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05, shadowRadius: 4, elevation: 1,
-  },
-  input: { flex: 1, fontSize: 15, color: '#1F1F1F', paddingVertical: 14 },
-  eyeIcon: { marginLeft: 8 },
-  forgotWrap: { alignItems: 'flex-end', marginTop: 4 },
-  forgotText: { fontSize: 13, color: '#1677F2', fontWeight: '600' },
-  btnPrimary: {
-    backgroundColor: '#1677F2', borderRadius: 50, paddingVertical: 16, alignItems: 'center',
-    shadowColor: '#1677F2', shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.35, shadowRadius: 12, elevation: 6,
-    marginBottom: 24,
-  },
+  safe: { flex: 1, backgroundColor: '#FFFFFF' },
+  scrollContainer: { padding: 24, flexGrow: 1 },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-start', gap: 10, marginBottom: 30 },
+  brandTitle: { fontSize: 28, fontWeight: '800' },
+  logo: { width: 35, height: 35 },
+  btnAnonimo: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, backgroundColor: '#F8FAFC', borderRadius: 50, paddingVertical: 14, borderWidth: 1.5, borderColor: '#E2E8F0', marginBottom: 12 },
+  btnAnonimoText: { fontSize: 15, fontWeight: '600', color: '#6B6B6B' },
+  legalText: { fontSize: 12, color: '#666', textAlign: 'center', marginVertical: 15 },
+  link: { color: '#1677F2', fontWeight: 'bold' },
+  dividerContainer: { flexDirection: 'row', alignItems: 'center', marginVertical: 10 },
+  line: { flex: 1, height: 1, backgroundColor: '#CCC' },
+  orText: { marginHorizontal: 10, color: '#666' },
+  input: { borderBottomWidth: 1, borderColor: '#666', paddingVertical: 10, fontSize: 16, marginBottom: 20 },
+  passwordContainer: { flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderColor: '#666', paddingVertical: 10, marginBottom: 20 },
+  checkboxRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 20, gap: 8 },
+  checkboxText: { color: '#666', fontSize: 13, flex: 1 },
+  forgotPass: { marginBottom: 24 },
+  forgotPassText: { color: '#1677F2', fontWeight: 'bold' },
+  btnPrimary: { backgroundColor: '#1677F2', borderRadius: 50, paddingVertical: 16, alignItems: 'center', marginBottom: 16 },
   btnPrimaryText: { color: '#fff', fontSize: 16, fontWeight: '700' },
-  divider: { flexDirection: 'row', alignItems: 'center', marginBottom: 24 },
-  dividerLine: { flex: 1, height: 1, backgroundColor: '#EAEAEA' },
-  dividerText: { fontSize: 13, color: '#6B6B6B', marginHorizontal: 12 },
-  socialButtons: { flexDirection: 'row', gap: 12, marginBottom: 32 },
-  socialBtn: {
-    flex: 1, paddingVertical: 14, borderRadius: 50, alignItems: 'center',
-    backgroundColor: '#fff', borderWidth: 1, borderColor: '#EAEAEA', elevation: 1,
-  },
-  socialBtnLi: { backgroundColor: '#0A66C2', borderColor: '#0A66C2' },
-  btnInner: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  linkedinIcon: {
-    backgroundColor: '#fff', borderRadius: 3,
-    width: 18, height: 18, alignItems: 'center', justifyContent: 'center',
-  },
-  linkedinIn: { color: '#0A66C2', fontSize: 11, fontWeight: '800' },
-  socialBtnText: { fontSize: 14, fontWeight: '600', color: '#1F1F1F' },
-  footer: { alignItems: 'center' },
-  footerText: { fontSize: 14, color: '#6B6B6B' },
-  footerLink: { color: '#1677F2', fontWeight: '600', textDecorationLine: 'underline' },
+  criarContaBtn: { alignItems: 'center', paddingVertical: 8 },
+  criarContaText: { fontSize: 14, color: '#666' },
+  criarContaLink: { color: '#1677F2', fontWeight: '700' },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center', padding: 24 },
+  modalContent: { backgroundColor: '#fff', borderRadius: 16, padding: 24, width: '100%' },
+  modalTitulo: { fontSize: 17, fontWeight: '700', color: '#1F1F1F', marginBottom: 16 },
+  modalTexto: { fontSize: 14, color: '#6B6B6B', lineHeight: 22 },
+  modalBtn: { backgroundColor: '#1677F2', borderRadius: 8, paddingVertical: 14, alignItems: 'center', marginTop: 24 },
+  modalBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  // ── Estilos de bloqueio definitivo ──
+  bloqueioContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 16 },
+  bloqueioIconeWrap: { width: 110, height: 110, borderRadius: 55, backgroundColor: '#FFF5F5', alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
+  bloqueioTitulo: { fontSize: 22, fontWeight: '800', color: '#E00000', textAlign: 'center' },
+  bloqueioDesc: { fontSize: 15, color: '#666', lineHeight: 24, textAlign: 'center' },
+  btnRecuperar: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#1677F2', paddingHorizontal: 32, paddingVertical: 14, borderRadius: 28, marginTop: 8 },
+  btnRecuperarTxt: { color: '#FFF', fontWeight: '700', fontSize: 15 },
+  btnVoltarSec: { paddingVertical: 12 },
+  btnVoltarSecTxt: { color: '#666', fontSize: 14, fontWeight: '600' },
 });

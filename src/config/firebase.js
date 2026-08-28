@@ -1,34 +1,46 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getApp, getApps, initializeApp } from 'firebase/app';
 import { getAuth, getReactNativePersistence, initializeAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { getDatabase } from 'firebase/database';
+import { getFirestore, initializeFirestore } from 'firebase/firestore';
+import { getStorage } from 'firebase/storage';
 
-const firebaseConfig = {
+export const firebaseConfig = {
   apiKey: "AIzaSyC2qcgZK-Ip_xBsdUewE_bsgd7BausAS4Y",
   authDomain: "connectallangola.firebaseapp.com",
   projectId: "connectallangola",
   storageBucket: "connectallangola.firebasestorage.app",
   messagingSenderId: "90320321734",
-  appId: "1:90320321734:web:865cd2b8bf50a1b43a6bc7"
+  appId: "1:90320321734:web:865cd2b8bf50a1b43a6bc7",
+  databaseURL: "https://connectallangola-default-rtdb.firebaseio.com",
 };
 
-// Inicializa a app só uma vez
-const app = getApps().length === 0
-  ? initializeApp(firebaseConfig)
-  : getApp();
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
-// Inicializa o auth só uma vez com persistência AsyncStorage
+// Auth com persistencia AsyncStorage
 let auth;
 try {
   auth = initializeAuth(app, {
     persistence: getReactNativePersistence(AsyncStorage),
   });
 } catch (e) {
-  // Já foi inicializado — reutiliza
   auth = getAuth(app);
 }
 
-const db = getFirestore(app);
+// Firestore sem persistentLocalCache (nao suportado no React Native)
+// A cache e feita manualmente via AsyncStorage no ConversaScreen
+let db;
+try {
+  db = initializeFirestore(app, {
+    experimentalForceLongPolling: true,
+    useFetchStreams: false,
+  });
+} catch (e) {
+  db = getFirestore(app);
+}
 
-export { auth, db };
+const storage = getStorage(app);
+const rtdb    = getDatabase(app);
+
+export { auth, db, rtdb, storage };
 export default app;

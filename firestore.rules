@@ -1,0 +1,206 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function estaAutenticado() {
+      return request.auth != null;
+    }
+
+    function eAdmin() {
+      return estaAutenticado() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'admin';
+    }
+
+    function eDono(uid) {
+      return estaAutenticado() && request.auth.uid == uid;
+    }
+
+    // ── Configurações de sons ──
+    match /configuracoes/sons {
+      allow read: if true;
+      allow write: if estaAutenticado();
+    }
+
+    // ── Utilizadores ──
+    match /users/{userId} {
+      allow read: if estaAutenticado();
+      allow create: if estaAutenticado();
+      allow update: if eDono(userId) || eAdmin();
+      allow delete: if eAdmin();
+
+      match /perfis/{perfilId} {
+        allow read: if estaAutenticado();
+        allow write: if eDono(userId) || eAdmin();
+      }
+      match /{subcollection}/{docId} {
+        allow read: if estaAutenticado();
+        allow write: if eDono(userId) || eAdmin();
+      }
+    }
+
+
+    match /usuarios/{userId} {
+      allow read: if estaAutenticado();
+      allow create: if estaAutenticado();
+      allow update: if eDono(userId) || eAdmin();
+      allow delete: if eAdmin();
+    }
+
+    // ── Posts ──
+    match /posts/{postId} {
+      allow read: if estaAutenticado();
+      allow create: if estaAutenticado();
+      allow update: if estaAutenticado() &&
+        (request.auth.uid == resource.data.uid ||
+         request.auth.uid == resource.data.userId ||
+         eAdmin() ||
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['denuncias']) ||
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes', 'likedBy', 'reacoesMap']) ||
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['comentarios']));
+      allow delete: if estaAutenticado() &&
+        (request.auth.uid == resource.data.uid ||
+         request.auth.uid == resource.data.userId ||
+         eAdmin());
+
+      match /reacoes/{uid} {
+        allow read: if estaAutenticado();
+        allow create, update: if eDono(uid);
+        allow delete: if eDono(uid) || eAdmin();
+      }
+
+      match /comentarios/{comentarioId} {
+        allow read: if estaAutenticado();
+        allow create: if estaAutenticado();
+        allow update, delete: if estaAutenticado() &&
+          (request.auth.uid == resource.data.uid || eAdmin());
+      }
+    }
+
+    // ── Stories ──
+    match /stories/{storyId} {
+      allow read: if estaAutenticado();
+      allow create: if estaAutenticado();
+      allow update: if estaAutenticado() &&
+        (request.auth.uid == resource.data.uid ||
+         eAdmin() ||
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['vistoPor']));
+      allow delete: if estaAutenticado() &&
+        (request.auth.uid == resource.data.uid || eAdmin());
+    }
+
+    // ── Chats ──
+    match /chats/{chatId} {
+      allow read, write: if estaAutenticado();
+      match /messages/{messageId} {
+        allow read, write: if estaAutenticado();
+      }
+    }
+
+    // ── Chamadas ──
+    match /chamadas/{chamadaId} {
+      allow read, write: if estaAutenticado();
+    }
+
+    // ── Salas de voz ──
+    match /salas/{salaId} {
+      allow read, write: if estaAutenticado();
+      match /participantes/{uid} {
+        allow read, write: if estaAutenticado();
+      }
+    }
+
+    // ── Notificações ──
+    match /notifications/{notifId} {
+      allow read, write: if estaAutenticado();
+    }
+    match /notificacoes/{userId} {
+      allow read, write: if estaAutenticado();
+      match /items/{itemId} {
+        allow read, write: if estaAutenticado();
+      }
+    }
+
+    // ── Pagamentos — apenas o próprio ou admin ──
+    match /payments/{payId} {
+      allow read: if estaAutenticado() &&
+        (request.auth.uid == resource.data.utilizadorId ||
+         request.auth.uid == resource.data.userId ||
+         eAdmin());
+      allow create: if estaAutenticado();
+      allow update, delete: if eAdmin();
+    }
+
+    // ── Denúncias — apenas o autor ou admin ──
+    match /reports/{repId} {
+      allow read: if estaAutenticado() &&
+        (request.auth.uid == resource.data.denunciadoPor || eAdmin());
+      allow create: if estaAutenticado();
+      allow update, delete: if eAdmin();
+    }
+    match /denuncias/{denId} {
+      allow read: if estaAutenticado() &&
+        (request.auth.uid == resource.data.denunciadoPor || eAdmin());
+      allow create: if estaAutenticado();
+      allow update, delete: if eAdmin();
+    }
+
+    // ── Suporte ──
+    match /suporte/{ticketId} {
+      allow read: if estaAutenticado() &&
+        (request.auth.uid == resource.data.uid || eAdmin());
+      allow create: if estaAutenticado();
+      allow update, delete: if eAdmin();
+    }
+
+    // ── Configurações (restantes) ──
+    match /configuracoes/{docId} {
+      allow read: if estaAutenticado();
+      allow write: if eAdmin();
+      match /{subDoc} {
+        allow read: if estaAutenticado();
+        allow write: if eAdmin();
+      }
+    }
+
+    // ── Logs de admin ──
+    match /adminLogs/{logId} {
+      allow read, write: if eAdmin();
+    }
+
+    // ── Mensagens ──
+    match /messages/{msgId} {
+      allow read, write: if estaAutenticado();
+    }
+    match /mensagens/{msgId} {
+      allow read, write: if estaAutenticado();
+    }
+
+    // ── Presença ──
+    match /presenca/{userId} {
+      allow read: if estaAutenticado();
+      allow write: if eDono(userId) || eAdmin();
+    }
+
+    // ── Redefinições de senha (trigger de desbloqueio) ──
+    // O cliente escreve aqui após login bem-sucedido com nova senha.
+    // Só o próprio utilizador pode escrever; a Cloud Function lê via Admin SDK.
+    match /redefinicoesSenha/{uid} {
+      allow read: if false;
+      allow write: if eDono(uid);
+    }
+
+    // ── Tentativas de login — BLOQUEADO ao cliente ──
+    // Só as Cloud Functions acedem via Admin SDK (ignora estas regras).
+    match /tentativasLogin/{email} {
+      allow read, write: if false;
+    }
+
+    // ── Pedidos de recuperação de conta ──
+    match /pedidosRecuperacao/{pedidoId} {
+      allow read: if eAdmin();
+      allow create: if true; // utilizador pode submeter mesmo sem sessão
+      allow update, delete: if eAdmin();
+    }
+  }
+}

@@ -1,80 +1,125 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
-    addDoc,
-    collection,
-    doc,
-    increment,
-    onSnapshot,
-    orderBy,
-    query,
-    serverTimestamp,
-    updateDoc,
+  addDoc,
+  collection,
+  deleteField,
+  doc,
+  increment,
+  onSnapshot,
+  orderBy,
+  query,
+  serverTimestamp,
+  updateDoc,
 } from 'firebase/firestore';
 import { useEffect, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
-    FlatList,
-    Image,
-    KeyboardAvoidingView,
-    Platform,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Animated,
+  FlatList,
+  Image,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  TouchableWithoutFeedback,
+  View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { db } from '../../config/firebase';
 import { useUser } from '../../context/UserContext';
+import { enviarNotificacao } from '../../services/notificationService';
 
 const TIPO_CORES = { conquista: '#FBBC05', ideia: '#1677F2', oportunidade: '#0D9488', artigo: '#7C3AED' };
+const REACOES_EMOJIS = ['❤️', '😢', '🫡', '💪', '🥳', '🙏'];
 
 function tempoRelativo(timestamp) {
   if (!timestamp) return '';
   const agora = new Date();
   const data = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
   const diff = Math.floor((agora - data) / 1000);
-  if (diff < 60) return 'agora';
-  if (diff < 3600) return `${Math.floor(diff / 60)}m`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
-  return `${Math.floor(diff / 86400)}d`;
+  
+  if (diff < 60) return 'Agora';
+  if (diff < 3600) return `${Math.floor(diff / 60)}m atrás`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h atrás`;
+  return `${Math.floor(diff / 86400)}d atrás`;
 }
 
 export default function PostComentariosScreen() {
   const router = useRouter();
-  const { postId, autorNome, autorFoto, autorCargo, autorCidade, texto, tipo, timestamp, likes } = useLocalSearchParams();
+  // Agora usamos os params apenas como fallback inicial, pois vamos buscar os dados reais via Firestore
+  const params = useLocalSearchParams();
+  const { postId } = params;
+  
   const { user, perfil } = useUser();
+  const [post, setPost] = useState(null); // Estado para guardar o post ativo da BD
   const [comentarios, setComentarios] = useState([]);
-  const [carregando, setCarregando] = useState(true);
+  const [carregandoPost, setCarregandoPost] = useState(true);
+  const [carregandoComentarios, setCarregandoComentarios] = useState(true);
   const [novoComentario, setNovoComentario] = useState('');
   const [enviando, setEnviando] = useState(false);
+  const [reacaoPickerComentario, setReacaoPickerComentario] = useState(null);
   const inputRef = useRef(null);
 
-  const cor = TIPO_CORES[tipo] || '#1677F2';
+  const pickerAnim = useRef(new Animated.Value(0)).current;
 
-  // Ouve comentários em tempo real
+  useEffect(() => {
+    if (reacaoPickerComentario) {
+      Animated.spring(pickerAnim, {
+        toValue: 1,
+        useNativeDriver: true,
+        tension: 60,
+        friction: 7,
+      }).start();
+    } else {
+      pickerAnim.setValue(0);
+    }
+  }, [reacaoPickerComentario]);
+
+  // 1. Ouve os dados do Post em tempo real (Garante o carregamento vindo das Notificações)
+  useEffect(() => {
+    if (!postId) return;
+
+    const docRef = doc(db, 'posts', postId);
+    const unsubPost = onSnapshot(docRef, (docSnap) => {
+      if (docSnap.exists) {
+        setPost({ id: docSnap.id, ...docSnap.data() });
+      } else {
+        console.log("O post associado a esta notificação já não existe.");
+      }
+      setCarregandoPost(false);
+    }, (error) => {
+      console.log("Erro ao carregar post:", error);
+      setCarregandoPost(false);
+    });
+
+    return unsubPost;
+  }, [postId]);
+
+  // 2. Ouve comentários em tempo real
   useEffect(() => {
     if (!postId) return;
     const q = query(
       collection(db, 'posts', postId, 'comentarios'),
       orderBy('timestamp', 'asc')
     );
-    const unsub = onSnapshot(q, (snap) => {
+    const unsubComentarios = onSnapshot(q, (snap) => {
       const dados = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       setComentarios(dados);
-      setCarregando(false);
+      setCarregandoComentarios(false);
     });
-    return unsub;
+    return unsubComentarios;
   }, [postId]);
 
   const enviarComentario = async () => {
-    if (!novoComentario.trim() || !user) return;
+    if (!novoComentario.trim() || !user || !post) return;
     const textoEnviar = novoComentario.trim();
     setNovoComentario('');
     setEnviando(true);
     try {
-      // Guarda o comentário
       await addDoc(collection(db, 'posts', postId, 'comentarios'), {
         uid: user.uid,
         autorNome: perfil.nome || 'Utilizador',
@@ -84,14 +129,55 @@ export default function PostComentariosScreen() {
         timestamp: serverTimestamp(),
       });
 
-      // Incrementa contador de comentários no post
       await updateDoc(doc(db, 'posts', postId), {
         comentarios: increment(1),
       });
+
+      // Usa o autorId dinâmico vindo diretamente do post carregado do Firestore
+      const donoDoPostId = post.autorId || post.uid;
+      
+      if (donoDoPostId && donoDoPostId !== user.uid) {
+        await enviarNotificacao(
+          donoDoPostId,
+          user.uid,
+          'comentario',
+          `${perfil.nome || 'Alguém'} comentou na tua publicação`,
+          perfil.fotoURL || null,
+          postId
+        );
+      }
     } catch (err) {
       console.log('Erro comentário:', err);
     } finally {
       setEnviando(false);
+    }
+  };
+
+  const handleReacaoComentario = async (comentario, emoji) => {
+    if (!user || !postId) return;
+    const comentarioRef = doc(db, 'posts', postId, 'comentarios', comentario.id);
+    const emojiAntigo = comentario.reacoesMap?.[user.uid];
+    setReacaoPickerComentario(null);
+
+    try {
+      if (emojiAntigo === emoji) {
+        await updateDoc(comentarioRef, {
+          likes: increment(-1),
+          [`reacoesMap.${user.uid}`]: deleteField()
+        });
+      } else {
+        const updates = { [`reacoesMap.${user.uid}`]: emoji };
+        if (!emojiAntigo) updates.likes = increment(1);
+        await updateDoc(comentarioRef, updates);
+        
+        if (comentario.uid !== user.uid) {
+          await enviarNotificacao(comentario.uid, user.uid, 'reacao',
+            `${perfil.nome} reagiu ao teu comentário: ${emoji}`,
+            perfil.fotoURL, postId);
+        }
+      }
+    } catch (err) {
+      console.log('Erro reacao comentario:', err);
     }
   };
 
@@ -106,18 +192,35 @@ export default function PostComentariosScreen() {
       </View>
       <View style={styles.comentarioBubble}>
         <View style={styles.comentarioHeader}>
-          <Text style={styles.comentarioNome}>{item.autorNome}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            <Text style={styles.comentarioNome}>{item.autorNome}</Text>
+            {item.autorVerificado && (
+              <Ionicons name="shield-checkmark" size={12} color="#1677F2" />
+            )}
+          </View>
           <Text style={styles.comentarioTempo}>{tempoRelativo(item.timestamp)}</Text>
         </View>
         {item.autorCargo ? <Text style={styles.comentarioCargo}>{item.autorCargo}</Text> : null}
         <Text style={styles.comentarioTexto}>{item.texto}</Text>
-        <TouchableOpacity style={styles.comentarioLikeBtn}>
-          <Ionicons name="heart-outline" size={13} color="#6B6B6B" />
-          <Text style={styles.comentarioLikeText}>Gosto</Text>
+        <TouchableOpacity 
+          style={styles.comentarioLikeBtn} 
+          onPress={() => handleReacaoComentario(item, '❤️')}
+          onLongPress={() => setReacaoPickerComentario(item)}
+        >
+          {item.reacoesMap?.[user?.uid] ? (
+            <Text style={{ fontSize: 14 }}>{item.reacoesMap[user.uid]}</Text>
+          ) : (
+            <Ionicons name="heart-outline" size={13} color="#6B6B6B" />
+          )}
+          <Text style={[styles.comentarioLikeText, item.reacoesMap?.[user?.uid] && { color: '#EF4444' }]}>
+            {item.likes || 0} Gosto
+          </Text>
         </TouchableOpacity>
       </View>
     </View>
   );
+
+  const corDefinida = post ? (TIPO_CORES[post.tipo] || '#1677F2') : '#1677F2';
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -142,51 +245,70 @@ export default function PostComentariosScreen() {
           showsVerticalScrollIndicator={false}
           ListHeaderComponent={() => (
             <View>
-              {/* Post original */}
-              <View style={styles.postCard}>
-                <View style={styles.postHeader}>
-                  <View style={[styles.postAvatar, { backgroundColor: cor }]}>
-                    {autorFoto ? (
-                      <Image source={{ uri: autorFoto }} style={styles.postAvatarImage} />
-                    ) : (
-                      <Text style={styles.postAvatarText}>{(autorNome || 'U')[0]}</Text>
-                    )}
-                  </View>
-                  <View style={styles.postMeta}>
-                    <Text style={styles.postAutor}>{autorNome}</Text>
-                    <Text style={styles.postCargo} numberOfLines={1}>{autorCargo}</Text>
-                    <View style={styles.postMetaRow}>
-                      {autorCidade ? (
-                        <>
-                          <Ionicons name="location-outline" size={11} color="#ABABAB" />
-                          <Text style={styles.postMetaText}>{autorCidade}</Text>
-                          <Text style={styles.postMetaDot}>·</Text>
-                        </>
-                      ) : null}
-                      <Text style={styles.postMetaText}>{tempoRelativo(timestamp ? { toDate: () => new Date(Number(timestamp)) } : null)}</Text>
+              {/* Renderização condicional enquanto carrega ou se o post existe */}
+              {carregandoPost ? (
+                <ActivityIndicator color="#1677F2" style={{ marginVertical: 30 }} />
+              ) : post ? (
+                <View style={styles.postCard}>
+                  <View style={styles.postHeader}>
+                    <View style={[styles.postAvatar, { backgroundColor: corDefinida }]}>
+                      {post.autorFoto || post.userFoto ? (
+                        <Image source={{ uri: post.autorFoto || post.userFoto }} style={styles.postAvatarImage} />
+                      ) : (
+                        <Text style={styles.postAvatarText}>{(post.autorNome || post.userName || 'U')[0]}</Text>
+                      )}
+                    </View>
+                    <View style={styles.postMeta}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                        <Text style={styles.postAutor}>{post.autorNome || post.userName}</Text>
+                        {post.autorVerificado && (
+                          <Ionicons name="shield-checkmark" size={14} color="#1677F2" />
+                        )}
+                      </View>
+                      <Text style={styles.postCargo} numberOfLines={1}>{post.autorCargo || post.userCargo}</Text>
+                      <View style={styles.postMetaRow}>
+                        {post.autorCidade || post.userCidade ? (
+                          <>
+                            <Ionicons name="location-outline" size={11} color="#ABABAB" />
+                            <Text style={styles.postMetaText}>{post.autorCidade || post.userCidade}</Text>
+                            <Text style={styles.postMetaDot}>·</Text>
+                          </>
+                        ) : null}
+                        <Text style={styles.postMetaText}>
+                          {post.createdAt || post.timestamp ? tempoRelativo(post.createdAt || post.timestamp) : ''}
+                        </Text>
+                      </View>
                     </View>
                   </View>
-                </View>
-                <Text style={styles.postTexto}>{texto}</Text>
-                <View style={styles.postStatsRow}>
-                  <View style={styles.postStatsLeft}>
-                    <View style={[styles.postLikeCircle, { backgroundColor: cor }]}>
-                      <Ionicons name="heart" size={9} color="#fff" />
-                    </View>
-                    <Text style={styles.postStatText}>{likes || 0} gostos</Text>
+                  <Text style={styles.postTexto}>{post.texto || post.content}</Text>
+                  <View style={styles.postStatsRow}>
+                    <TouchableOpacity style={styles.postStatsLeft} onPress={() => router.push({ pathname: '/(main)/ReacoesModal', params: { postId: post.id } })}>
+                      <View style={styles.emojiOverlapContainer}>
+                        {post.reacoesMap ? [...new Set(Object.values(post.reacoesMap))].slice(0, 3).map((emoji, idx) => (
+                          <Text key={idx} style={[styles.overlapEmoji, { zIndex: 10 - idx, marginLeft: idx === 0 ? 0 : -8 }]}>{emoji}</Text>
+                        )) : (
+                          <Ionicons name="heart-sharp" size={14} color="#EF4444" />
+                        )}
+                      </View>
+                      <Text style={styles.postStatText}>{post.likes || 0} reações</Text>
+                    </TouchableOpacity>
+                    <Text style={styles.postStatText}>{comentarios.length} comentários</Text>
                   </View>
-                  <Text style={styles.postStatText}>{comentarios.length} comentários</Text>
                 </View>
-              </View>
+              ) : (
+                <View style={styles.emptyWrap}>
+                  <Text style={styles.emptyText}>Não foi possível carregar esta publicação.</Text>
+                </View>
+              )}
 
               {/* Separador comentários */}
               <View style={styles.comentariosSep}>
                 <Text style={styles.comentariosTitle}>Comentários</Text>
               </View>
 
-              {carregando && <ActivityIndicator color="#1677F2" style={{ marginTop: 20 }} />}
+              {carregandoComentarios && <ActivityIndicator color="#1677F2" style={{ marginTop: 20 }} />}
 
-              {!carregando && comentarios.length === 0 && (
+              {!carregandoComentarios && comentarios.length === 0 && (
                 <View style={styles.emptyWrap}>
                   <Ionicons name="chatbubble-outline" size={36} color="#ABABAB" />
                   <Text style={styles.emptyText}>Ainda não há comentários.</Text>
@@ -233,6 +355,24 @@ export default function PostComentariosScreen() {
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
+
+      {/* Picker de Emojis para Comentários */}
+      <Modal visible={reacaoPickerComentario !== null} transparent animationType="fade" onRequestClose={() => setReacaoPickerComentario(null)}>
+        <TouchableWithoutFeedback onPress={() => setReacaoPickerComentario(null)}>
+          <View style={styles.modalOverlayReacao}>
+            <Animated.View style={[
+              styles.pickerContainer,
+              { transform: [{ scale: pickerAnim }, { translateY: pickerAnim.interpolate({ inputRange: [0, 1], outputRange: [20, 0] }) }] }
+            ]}>
+              {REACOES_EMOJIS.map(e => (
+                <TouchableOpacity key={e} style={styles.emojiBtn} onPress={() => handleReacaoComentario(reacaoPickerComentario, e)}>
+                  <Text style={styles.emojiText}>{e}</Text>
+                </TouchableOpacity>
+              ))}
+            </Animated.View>
+          </View>
+        </TouchableWithoutFeedback>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -271,6 +411,12 @@ const styles = StyleSheet.create({
   postStatsLeft: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   postLikeCircle: { width: 17, height: 17, borderRadius: 8.5, alignItems: 'center', justifyContent: 'center' },
   postStatText: { fontSize: 12, color: '#ABABAB' },
+  emojiOverlapContainer: { flexDirection: 'row', alignItems: 'center', marginRight: 4 },
+  overlapEmoji: { fontSize: 14, backgroundColor: '#fff', borderRadius: 10, overflow: 'hidden', borderWidth: 1, borderColor: '#fff' },
+  modalOverlayReacao: { flex: 1, backgroundColor: 'rgba(0,0,0,0.2)', justifyContent: 'center', alignItems: 'center' },
+  pickerContainer: { flexDirection: 'row', backgroundColor: '#fff', borderRadius: 30, padding: 8, elevation: 4, gap: 8 },
+  emojiBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  emojiText: { fontSize: 22 },
   comentariosSep: {
     paddingHorizontal: 16, paddingVertical: 10,
     borderBottomWidth: 0.5, borderBottomColor: '#EAEAEA',

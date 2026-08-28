@@ -1,0 +1,16 @@
+export const C = {
+  azul:        '#0A66C2',
+  azulEscuro:  '#004182',
+  azulClaro:   '#E8F0FB',
+  branco:      '#FFFFFF',
+  preto:       '#000000',
+  cinza1:      '#F3F2EE',
+  cinza2:      '#E0DDD8',
+  cinza3:      '#666360',
+  cinza4:      '#1B1B1B',
+  verde:       '#057642',
+  verdeClaro:  '#EAF6EF',
+  vermelho:    '#CC1016',
+  laranja:     '#D97706',
+  laranjaClaro:'#FFFBEB',
+};

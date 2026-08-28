@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
@@ -8,190 +9,423 @@ const TITULOS = {
   contrato: 'Contrato do Utilizador',
   privacidade: 'Política de Privacidade',
   cookies: 'Política de Cookies',
+  'termos-recrutador': 'Termos para Recrutadores',
+  'codigo-conduta-recrutador': 'Código de Conduta',
 };
 
 const HTML_CONTENT = `
 <!DOCTYPE html>
 <html lang="pt">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Políticas Legais — ConnectAll Angola</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: -apple-system, sans-serif; background: #F8F6F1; color: #0A0A0A; padding: 20px; }
-    h1 { font-size: 22px; font-weight: 800; color: #CC0000; margin-bottom: 8px; }
-    h2 { font-size: 16px; font-weight: 700; color: #0A0A0A; margin: 24px 0 8px; border-left: 4px solid #CC0000; padding-left: 10px; }
-    h3 { font-size: 13px; font-weight: 700; margin: 16px 0 6px; text-transform: uppercase; }
-    p { font-size: 14px; color: #333; line-height: 1.7; margin-bottom: 10px; }
-    ul { margin: 8px 0 14px 0; padding-left: 0; list-style: none; }
-    ul li { font-size: 14px; color: #444; margin-bottom: 6px; padding-left: 16px; position: relative; line-height: 1.6; }
-    ul li::before { content: '—'; position: absolute; left: 0; color: #CC0000; font-weight: 700; }
-    .tabs { display: flex; gap: 8px; margin-bottom: 24px; overflow-x: auto; }
-    .tab { padding: 8px 16px; border-radius: 20px; border: 1.5px solid #DCDCDC; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; background: #fff; color: #6B6B6B; }
-    .tab.active { background: #CC0000; color: #fff; border-color: #CC0000; }
+
+    body {
+      font-family: 'EB Garamond', Georgia, serif;
+      background: #ffffff;
+      color: #111111;
+      font-size: 16px;
+      line-height: 1.85;
+    }
+
+    .page {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 40px 24px 120px;
+    }
+
+    /* ---- HEADER ---- */
+    .doc-header {
+      border-bottom: 1px solid #111;
+      padding-bottom: 40px;
+      margin-bottom: 56px;
+    }
+
+    .company-name {
+      font-family: 'Cormorant Garamond', serif;
+      font-weight: 300;
+      font-size: 11px;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      color: #555;
+      margin-bottom: 28px;
+    }
+
+    .doc-title {
+      font-family: 'Cormorant Garamond', serif;
+      font-weight: 400;
+      font-size: 36px;
+      line-height: 1.2;
+      color: #111;
+      margin-bottom: 8px;
+    }
+
+    .doc-subtitle {
+      font-family: 'Cormorant Garamond', serif;
+      font-weight: 300;
+      font-size: 18px;
+      color: #444;
+      margin-bottom: 24px;
+    }
+
+    .doc-meta {
+      font-size: 13px;
+      color: #777;
+      font-style: italic;
+      letter-spacing: 0.3px;
+    }
+
+    /* ---- TABS ---- */
+    .tab-bar {
+      display: flex;
+      gap: 0;
+      border-bottom: 1px solid #ddd;
+      margin-bottom: 56px;
+    }
+
+    .tab-btn {
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      padding: 12px 0;
+      margin-right: 36px;
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 14px;
+      font-weight: 500;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: #999;
+      cursor: pointer;
+      transition: color 0.2s, border-color 0.2s;
+      margin-bottom: -1px;
+    }
+
+    .tab-btn:hover { color: #333; }
+    .tab-btn.active { color: #111; border-bottom-color: #111; }
+
+    /* ---- SECTIONS ---- */
     .section { display: none; }
     .section.active { display: block; }
-    .badge { display: inline-block; background: #CC0000; color: #fff; font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 3px; margin-bottom: 12px; }
-    .doc-title { font-size: 24px; font-weight: 800; color: #0A0A0A; margin-bottom: 4px; }
-    .doc-meta { font-size: 12px; color: #888; margin-bottom: 24px; }
-    .highlight { background: #fff; border-left: 4px solid #F5C800; padding: 12px 16px; margin: 16px 0; border-radius: 0 8px 8px 0; }
-    .warning { background: #fff8f8; border-left: 4px solid #CC0000; padding: 12px 16px; margin: 16px 0; border-radius: 0 8px 8px 0; }
-    .contact { background: #0A0A0A; padding: 20px; margin-top: 28px; border-left: 5px solid #F5C800; border-radius: 4px; }
-    .contact h3 { color: #F5C800; margin-bottom: 10px; }
-    .contact p { color: #ccc; font-size: 13px; margin-bottom: 4px; }
-    .contact a { color: #F5C800; }
-    table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 12px; }
-    th { background: #0A0A0A; color: #F5C800; padding: 8px 10px; text-align: left; }
-    td { padding: 8px 10px; border-bottom: 1px solid #E8E8E8; color: #333; }
-    tr:nth-child(even) td { background: #fff; }
+
+    /* ---- TYPOGRAPHY ---- */
+    .intro-text {
+      font-size: 16.5px;
+      color: #333;
+      margin-bottom: 48px;
+      padding-bottom: 32px;
+      border-bottom: 1px solid #eee;
+      font-style: italic;
+    }
+
+    h2 {
+      font-family: 'Cormorant Garamond', serif;
+      font-weight: 500;
+      font-size: 15px;
+      letter-spacing: 2.5px;
+      text-transform: uppercase;
+      color: #111;
+      margin-top: 48px;
+      margin-bottom: 16px;
+    }
+
+    h3 {
+      font-family: 'EB Garamond', serif;
+      font-weight: 600;
+      font-size: 16px;
+      color: #111;
+      margin-top: 28px;
+      margin-bottom: 10px;
+    }
+
+    p {
+      font-size: 16px;
+      color: #222;
+      margin-bottom: 16px;
+    }
+
+    .law-ref {
+      display: inline;
+      font-style: italic;
+      color: #444;
+    }
+
+    .law-block {
+      border-left: 2px solid #ccc;
+      padding-left: 20px;
+      margin: 24px 0;
+      font-size: 14.5px;
+      color: #444;
+      font-style: italic;
+    }
+
+    /* ---- FOOTER ---- */
+    .doc-footer {
+      margin-top: 80px;
+      padding-top: 32px;
+      border-top: 1px solid #111;
+      font-size: 13px;
+      color: #666;
+    }
+
+    .doc-footer strong { color: #111; }
+
+    @media (max-width: 600px) {
+      .page { padding: 40px 24px 80px; }
+      .doc-title { font-size: 26px; }
+      .tab-btn { font-size: 12px; margin-right: 20px; }
+    }
   </style>
 </head>
 <body>
 
-<div class="tabs">
-  <button class="tab active" onclick="showTab('termos', this)">Termos</button>
-  <button class="tab" onclick="showTab('privacidade', this)">Privacidade</button>
-  <button class="tab" onclick="showTab('cookies', this)">Cookies</button>
-</div>
+<div class="page">
 
-<!-- TERMOS -->
-<div class="section active" id="termos">
-  <div class="badge">Documento Legal</div>
-  <div class="doc-title">Termos e Condições</div>
-  <div class="doc-meta">Última atualização: 22 de Maio de 2026 | Versão 1.0</div>
-  <div class="highlight"><p>Ao utilizar a ConnectAll Angola, concorda com os presentes Termos e Condições da <strong>Mayangue Service</strong>.</p></div>
-  <h2>1. Identificação</h2>
-  <p><strong>Mayangue Service</strong>, empresa angolana de tecnologia, detentora e responsável pela plataforma ConnectAll Angola.</p>
-  <h2>2. Aceitação dos Termos</h2>
-  <p>O acesso e uso da ConnectAll Angola implica a aceitação integral destes Termos. Caso não concorde, deverá abster-se de utilizar a plataforma.</p>
-  <h2>3. Registo e Conta</h2>
-  <ul>
-    <li>O utilizador deve ter pelo menos 16 anos</li>
-    <li>Os dados fornecidos devem ser verídicos e atualizados</li>
-    <li>O utilizador é responsável pela confidencialidade da sua senha</li>
-    <li>É proibida a criação de contas falsas ou em nome de terceiros</li>
-  </ul>
-  <h2>4. Conduta do Utilizador</h2>
-  <p>É <strong>estritamente proibido</strong>:</p>
-  <ul>
-    <li>Publicar conteúdo ofensivo, discriminatório, racista ou violento</li>
-    <li>Assediar, intimidar ou ameaçar outros utilizadores</li>
-    <li>Partilhar informações falsas ou difamatórias</li>
-    <li>Violar direitos de propriedade intelectual</li>
-    <li>Usar a plataforma para spam ou publicidade não autorizada</li>
-    <li>Realizar qualquer atividade ilegal ao abrigo da legislação angolana</li>
-  </ul>
-  <h2>5. Conteúdo Publicado</h2>
-  <h3>5.1 Propriedade</h3>
-  <p>O utilizador mantém a propriedade dos conteúdos que publica e concede à Mayangue Service uma licença não exclusiva para exibi-los na plataforma.</p>
-  <h3>5.2 Responsabilidade</h3>
-  <p>O utilizador é o único responsável pelos conteúdos que publica. A Mayangue Service pode remover qualquer conteúdo que viole estes Termos.</p>
-  <h2>6. Propriedade Intelectual</h2>
-  <p>Todos os elementos da ConnectAll Angola são propriedade exclusiva da <strong>Mayangue Service</strong>, protegidos pelas leis angolanas de propriedade intelectual.</p>
-  <h2>7. Limitação de Responsabilidade</h2>
-  <div class="warning"><p>⚠️ A Mayangue Service não garante disponibilidade ininterrupta e não se responsabiliza por perdas de dados ou danos indiretos, salvo nos casos previstos na lei angolana.</p></div>
-  <h2>8. Lei Aplicável</h2>
-  <p>Este contrato é regido pela legislação da <strong>República de Angola</strong>. Qualquer litígio será submetido aos tribunais angolanos competentes, sendo Luanda o foro eleito.</p>
-  <div class="contact">
-    <h3>Contacto — Mayangue Service</h3>
-    <p>📧 <a href="mailto:privacidademayangueservicecta@gmail.com">privacidademayangueservicecta@gmail.com</a></p>
-    <p>📍 Luanda, República de Angola</p>
+  <div class="doc-header">
+    <div class="company-name">Mayangue Service &nbsp;&nbsp;|&nbsp;&nbsp; ConnectAll Angola</div>
+    <div class="doc-title">Documentos Legais</div>
+    <div class="doc-subtitle">Política de Privacidade, Contrato do Utilizador e Política de Cookies</div>
+    <div class="doc-meta">Versão 1.0 &nbsp;&nbsp;|&nbsp;&nbsp; Luanda, República de Angola &nbsp;&nbsp;|&nbsp;&nbsp; Última actualização: 22 de Maio de 2026</div>
   </div>
-</div>
 
-<!-- PRIVACIDADE -->
-<div class="section" id="privacidade">
-  <div class="badge">Documento Legal</div>
-  <div class="doc-title">Política de Privacidade</div>
-  <div class="doc-meta">Última atualização: 22 de Maio de 2026 | Versão 1.0</div>
-  <div class="highlight"><p>A <strong>Mayangue Service</strong> compromete-se a proteger a privacidade dos utilizadores da ConnectAll Angola.</p></div>
-  <h2>1. Dados Recolhidos</h2>
-  <h3>Dados fornecidos pelo utilizador</h3>
-  <ul>
-    <li>Nome completo e foto de perfil</li>
-    <li>Endereço de e-mail ou número de telefone</li>
-    <li>Área profissional e biografia</li>
-    <li>Cidade e localização</li>
-    <li>Conteúdos publicados na plataforma</li>
-  </ul>
-  <h3>Dados recolhidos automaticamente</h3>
-  <ul>
-    <li>Endereço IP e tipo de dispositivo</li>
-    <li>Sistema operativo e versão da aplicação</li>
-    <li>Dados de uso e interações na plataforma</li>
-    <li>Timestamps de acesso</li>
-  </ul>
-  <h2>2. Finalidade do Tratamento</h2>
-  <ul>
-    <li>Prestação e melhoria dos serviços da plataforma</li>
-    <li>Personalização da experiência do utilizador</li>
-    <li>Envio de notificações relevantes</li>
-    <li>Segurança e prevenção de fraudes</li>
-    <li>Cumprimento de obrigações legais</li>
-  </ul>
-  <h2>3. Partilha de Dados</h2>
-  <p>Os dados dos utilizadores <strong>não são vendidos</strong> a terceiros. Podem ser partilhados apenas com:</p>
-  <ul>
-    <li>Fornecedores de serviços técnicos (Firebase/Google)</li>
-    <li>Autoridades competentes, quando legalmente exigido</li>
-  </ul>
-  <h2>4. Segurança</h2>
-  <p>Utilizamos encriptação SSL/TLS, autenticação segura via Firebase e controlos de acesso rigorosos para proteger os seus dados.</p>
-  <h2>5. Direitos do Utilizador</h2>
-  <ul>
-    <li>Aceder aos seus dados pessoais</li>
-    <li>Corrigir dados incorretos</li>
-    <li>Solicitar a eliminação da conta</li>
-    <li>Exportar os seus dados</li>
-    <li>Retirar consentimento a qualquer momento</li>
-  </ul>
-  <h2>6. Retenção de Dados</h2>
-  <p>Os dados são conservados enquanto a conta estiver ativa. Após eliminação, os dados são apagados num prazo máximo de 90 dias.</p>
-  <div class="contact">
-    <h3>Contacto — Mayangue Service</h3>
-    <p> <a href="mailto:privacidademayangueservicecta@gmail.com">privacidademayangueservicecta@gmail.com</a></p>
-    <p>📍 Luanda, República de Angola</p>
+  <div class="tab-bar">
+    <button class="tab-btn active" onclick="showTab('privacidade', this)">Privacidade</button>
+    <button class="tab-btn" onclick="showTab('contrato', this)">Contrato</button>
+    <button class="tab-btn" onclick="showTab('cookies', this)">Cookies</button>
+    <button class="tab-btn" onclick="showTab('termos-recrutador', this)">Termos Recrutador</button>
+    <button class="tab-btn" onclick="showTab('codigo-conduta-recrutador', this)">Conduta</button>
   </div>
-</div>
 
-<!-- COOKIES -->
-<div class="section" id="cookies">
-  <div class="badge">Documento Legal</div>
-  <div class="doc-title">Política de Cookies</div>
-  <div class="doc-meta">Última atualização: 22 de Maio de 2026 | Versão 1.0</div>
-  <div class="highlight"><p>Esta política explica como a <strong>Mayangue Service</strong> utiliza cookies e tecnologias similares na ConnectAll Angola.</p></div>
-  <h2>1. O que são Cookies?</h2>
-  <p>Cookies são pequenos ficheiros armazenados no seu dispositivo. Na ConnectAll Angola utilizamos <strong>tokens de sessão</strong>, <strong>armazenamento local</strong> e <strong>identificadores de dispositivo</strong>.</p>
-  <h2>2. Tipos de Cookies</h2>
-  <table>
-    <thead><tr><th>Tipo</th><th>Tecnologia</th><th>Finalidade</th><th>Duração</th></tr></thead>
-    <tbody>
-      <tr><td><strong>Essenciais</strong></td><td>Firebase Auth Token</td><td>Manter sessão ativa</td><td>30 dias</td></tr>
-      <tr><td><strong>Essenciais</strong></td><td>AsyncStorage</td><td>Preferências offline</td><td>Persistente</td></tr>
-      <tr><td><strong>Analíticos</strong></td><td>Firebase Analytics</td><td>Estatísticas anónimas</td><td>24 meses</td></tr>
-      <tr><td><strong>Desempenho</strong></td><td>Firebase Performance</td><td>Monitorizar erros</td><td>30 dias</td></tr>
-    </tbody>
-  </table>
-  <h2>3. Cookies Essenciais</h2>
-  <div class="warning"><p>⚠️ Não é possível desativar os cookies essenciais sem comprometer o funcionamento da aplicação.</p></div>
-  <h2>4. Gerir Preferências</h2>
-  <ul>
-    <li>Aceda a <strong>Perfil → Definições → Privacidade</strong></li>
-    <li>Ative ou desative a recolha de dados analíticos</li>
-    <li>Solicite a eliminação dos seus dados</li>
-  </ul>
-  <div class="contact">
-    <h3>Contacto — Mayangue Service</h3>
-    <p>📧 <a href="mailto:privacidademayangueservicecta@gmail.com">privacidademayangueservicecta@gmail.com</a></p>
-    <p>📍 Luanda, República de Angola</p>
+  <div class="section active" id="privacidade">
+    <p class="intro-text">A Mayangue Service, entidade responsável pela aplicação ConnectAll Angola, compromete-se a proteger a privacidade e os dados pessoais de todos os seus utilizadores, em conformidade com a Constituição da República de Angola e com a legislação em vigor, nomeadamente a Lei n.º 22/11, de 17 de Junho, designada Lei de Protecção de Dados Pessoais, e a Lei n.º 23/11, de 20 de Junho, relativa às Comunicações Electrónicas e aos Serviços da Sociedade da Informação.</p>
+
+    <h2>1. Responsável pelo Tratamento de Dados</h2>
+    <p>O responsável pelo tratamento dos dados pessoais recolhidos através da aplicação ConnectAll Angola é a Mayangue Service, entidade legalmente constituída em Angola, com sede em Luanda, nos termos da legislação angolana em vigor. Nos termos do artigo 5.º da Lei n.º 22/11, de 17 de Junho (Lei de Protecção de Dados Pessoais), o responsável pelo tratamento determina as finalidades e os meios de tratamento dos dados pessoais.</p>
+
+    <h2>2. Dados que Recolhemos</h2>
+    <p>Em conformidade com os princípios da necessidade e proporcionalidade estabelecidos no artigo 7.º da Lei n.º 22/11, de 17 de Junho, a Mayangue Service recolhe exclusivamente os dados necessários à prestação do serviço. Os dados fornecidos pelo utilizador no momento do registo e durante o uso da plataforma incluem: nome completo e fotografia de perfil; endereço de correio electrónico e número de telefone; área profissional, especialidades e competências; universidade ou empresa actual; localização por cidade ou província; idiomas falados e interesses declarados; conteúdos publicados, como textos, imagens e vídeos; mensagens trocadas em conversas privadas e em grupos.</p>
+    <p>São igualmente recolhidos automaticamente, no âmbito da utilização da plataforma, os seguintes dados técnicos: endereço de protocolo de Internet e tipo de dispositivo utilizado; sistema operativo e versão da aplicação; dados de navegação e de interacção com a plataforma; data e hora de acesso; identificadores únicos do dispositivo. Estes dados são tratados nos termos do artigo 22.º da Lei n.º 23/11, de 20 de Junho, que regula o tratamento de dados de tráfego nas comunicações electrónicas.</p>
+
+    <h2>3. Finalidade do Tratamento</h2>
+    <p>Nos termos do artigo 6.º da Lei n.º 22/11, de 17 de Junho, os dados pessoais apenas podem be recolhidos para finalidades determinadas, explícitas e legítimas. A Mayangue Service trata os dados dos utilizadores para as seguintes finalidades: criação e gestão da conta na plataforma; disponibilização de funcionalidades de comunicação e de networking profissional; personalização do conteúdo apresentado e recomendação de conexões relevantes; envio de notificações sobre eventos, grupos e oportunidades; melhoria da experiência de utilização e da segurança da plataforma; cumprimento de obrigações legais aplicáveis na República de Angola.</p>
+
+    <h2>4. Base Legal do Tratamento</h2>
+    <p>O tratamento de dados pessoais realizado pela Mayangue Service assenta nas seguintes bases jurídicas previstas na Lei n.º 22/11, de 17 de Junho: o consentimento prestado pelo utilizador no momento do registo, nos termos do artigo 12.º; a execução do contrato de utilização da plataforma, sendo o tratamento necessário para a prestação do serviço contratado; os interesses legítimos da Mayangue Service na melhoria e segurança da plataforma, desde que não prevaleçam sobre os direitos e liberdades fundamentais do titular dos dados; o cumprimento de obrigação legal, quando assim exigido pelas autoridades competentes angolanas ao abrigo do direito aplicável.</p>
+
+    <h2>5. Partilha de Dados com Terceiros</h2>
+    <p>A Mayangue Service não procede à venda dos dados pessoais dos seus utilizadores a terceiros. Em conformidade com o disposto no artigo 20.º da Lei n.º 22/11, de 17 de Junho, a comunicação de dados a terceiros apenas ocorre nas seguintes situações: com prestadores de serviços técnicos vinculados contratualmente a obrigações de confidencialidade e de protecção de dados; com as autoridades públicas competentes, quando o fornecimento de dados for exigido por lei ou por decisão judicial; com a Google Firebase, para efeitos de autenticação de utilizadores e de armazenamento de dados, no âmbito do desenvolvimento da plataforma, mediante garantias adequadas de protecção.</p>
+
+    <h2>6. Armazenamento e Segurança</h2>
+    <p>A Mayangue Service adopta medidas técnicas e organizativas adequadas para garantir a segurança dos dados pessoais, em conformidade com o artigo 14.º da Lei n.º 22/11, de 17 de Junho, e com o regime de protecção das redes e sistemas informáticos previsto na Lei n.º 7/17, de 16 de Fevereiro. As medidas implementadas incluem a encriptação SSL/TLS nas comunicações efectuadas através da plataforma; a autenticação segura por intermédio da Firebase Authentication; o controlo de acesso restrito aos dados tratados; a monitorização contínua da segurança dos sistemas.</p>
+
+    <div class="law-block">
+      Lei n.º 7/17, de 16 de Fevereiro — Lei de Protecção das Redes e Sistemas Informáticos: "As redes do ciberespaço devem assegurar a integridade, a confidencialidade e a privacidade das comunicações mediante implementação de serviços de segurança lógica e física."
+    </div>
+
+    <h2>7. Retenção de Dados</h2>
+    <p>Nos termos do artigo 11.º da Lei n.º 22/11, de 17 de Junho, os dados pessoais não devem ser conservados por período superior ao necessário para a prossecução das finalidades de recolha. Os dados dos utilizadores são conservados enquanto a conta permanecer activa. Após a eliminação da conta, os dados são apagados num prazo máximo de noventa dias, salvo obrigação legal de conservação por período superior, designadamente nos termos das normas tributárias, contabilísticas ou processuais aplicáveis em Angola.</p>
+
+    <h2>8. Direitos do Titular dos Dados</h2>
+    <p>Em conformidade com o Capítulo III da Lei n.º 22/11, de 17 de Junho, o utilizador dispõe dos seguintes direitos relativamente aos seus dados pessoais: direito de acesso, para consultar os dados que a Mayangue Service conserva sobre si; direito de rectificação, para corrigir dados incorrectos, incompletos ou desactualizados; direito de eliminação, para solicitar o apagamento da sua conta e dos dados associados; direito de portabilidade, para receber os seus dados num formato legível por máquina; direito de oposição a determinados tratamentos de dados; direito de revogação do consentimento, a qualquer momento, sem que tal afecte a licitude do tratamento efectuado com base no consentimento previamente prestado. Os pedidos de exercício dos direitos devem ser dirigidos para o endereço de correio electrónico indicado no final do presente documento.</p>
+
+    <h2>9. Menores de Idade</h2>
+    <p>A plataforma ConnectAll Angola destina-se a utilizadores com idade igual ou superior a dezasseis anos. A Mayangue Service não recolhe conscientemente dados pessoais de menores de dezasseis anos. Caso seja detectada a existência de uma conta registada por um menor em violação da presente disposição, a conta será imediatamente suspensa e os dados eliminados. Esta limitação está em consonância com as disposições do Código Civil Angolano relativas à capacidade de exercício e com os princípios gerais de protecção de menores.</p>
+
+    <h2>10. Alterações à Política de Privacidade</h2>
+    <p>A Mayangue Service reserva-se o direito de actualizar a presente política sempre que tal se mostre necessário, designadamente por alteração da legislação aplicável ou por modificação das práticas de tratamento de dados. Quaisquer alterações serão comunicadas aos utilizadores através da aplicação com antecedência mínima de quinze dias relativamente à data de entrada em vigor, nos termos previstos no artigo 10.º da Lei n.º 22/11, de 17 de Junho.</p>
+
+    <h2>Referências Legais</h2>
+    <p>A presente política fundamenta-se nas seguintes disposições legais: Constituição da República de Angola, aprovada em 2010 e revista em 2021, artigos 32.º e 77.º relativos à reserva da intimidade da vida privada e à inviolabilidade das comunicações; Lei n.º 22/11, de 17 de Junho — Lei de Protecção de Dados Pessoais, publicada no Diário da República, I Série, n.º 114, de Luanda; Lei n.º 23/11, de 20 de Junho — Lei das Comunicações Electrónicas e dos Serviços da Sociedade da Informação; Lei n.º 7/17, de 16 de Fevereiro — Lei de Protecção das Redes e Sistemas Informáticos; Proposta de Lei de Protecção de Dados Pessoais, versão de 2025, em fase de aprovação pela Assembleia Nacional da República de Angola.</p>
+
+    <div class="doc-footer">
+      <strong>Mayangue Service</strong><br>
+      Responsável pelo tratamento de dados da plataforma ConnectAll Angola<br>
+      Correio electrónico: privacidademayangueservicecta@gmail.com<br>
+      Localização: Luanda, República de Angola<br>
+      <span class="law-ref">Documento elaborado em conformidade com a Lei n.º 22/11, de 17 de Junho, e demais legislação angolana aplicável.</span>
+    </div>
   </div>
+
+  <div class="section" id="contrato">
+    <p class="intro-text">Ao criar uma conta e utilizar a aplicação ConnectAll Angola, o utilizador declara ter lido, compreendido e aceite integralmente os presentes Termos e Condições de Uso, estabelecidos pela Mayangue Service, entidade legalmente constituída na República de Angola. Este contrato rege-se pela legislação angolana em vigor, nomeadamente o Código Civil Angolano, a Lei n.º 22/11, de 17 de Junho, e a Lei n.º 23/11, de 20 de Junho.</p>
+
+    <h2>1. Identificação das Partes</h2>
+    <p>O presente contrato é celebrado entre a Mayangue Service, fornecedora do serviço, empresa legalmente constituída em Angola com sede em Luanda, e o utilizador, pessoa singular ou colectiva que se registe e utilize a plataforma ConnectAll Angola. Ao proceder ao registo, o utilizador confirma que tem capacidade jurídica para contratar, nos termos dos artigos 122.º e seguintes do Código Civil Angolano, aprovado pela Lei n.º 10/11, de 8 de Abril.</p>
+
+    <h2>2. Objecto do Contrato</h2>
+    <p>A Mayangue Service disponibiliza ao utilizador, a título gratuito, o acesso à plataforma ConnectAll Angola, que compreende as seguintes funcionalidades: criação de perfil profissional; publicação e visualização de conteúdo num feed partilhado; comunicação em tempo real através de chat privado e de grupos; participação em grupos de discussão temáticos; acesso a eventos, transmissões ao vivo e webinars; estabelecimento de conexões com profissionais e estudantes angolanos e de outros países; exploração de oportunidades profissionais e académicas. A Mayangue Service reserva-se o direito de alterar, ampliar ou restringir as funcionalidades da plataforma, mediante prévia comunicação ao utilizador.</p>
+
+    <h2>3. Registo e Conta de Utilizador</h2>
+    <h3>3.1 Elegibilidade</h3>
+    <p>Para se registar na plataforma, o utilizador deve ter pelo menos dezasseis anos de idade e fornecer informações verdadeiras, precisas e actualizadas, nos termos exigidos pelo princípio da boa fé previsto no artigo 227.º do Código Civil Angolano. A prestação de informações falsas constitui fundamento de resolução imediata do contrato e pode configurar ilícito nos termos do Código Penal Angolano, aprovado pela Lei n.º 38/20, de 11 de Novembro.</p>
+
+    <h3>3.2 Responsabilidade pela Conta</h3>
+    <p>O utilizador é o único responsável pela privacidade das suas credenciais de acesso. Cada utilizador pode dispor de apenas uma conta pessoal. É expressamente proibida a criação de contas falsas ou a personificação de terceiros, o que pode constituir crime nos termos do artigo 195.º do Código Penal Angolano, relativo à usurpação de identidade.</p>
+
+    <h2>4. Conduta do Utilizador</h2>
+    <p>No âmbito da utilização da plataforma ConnectAll Angola, é expressamente proibido ao utilizador publicar conteúdo ofensivo, discriminatório, racista, violento ou pornográfico, em violação dos artigos 71.º e seguintes do Código Penal Angolano; assediar, intimidar ou ameaçar outros utilizadores, o que pode configurar crime de ameaça ou de coacção nos termos dos artigos 153.º e 154.º do Código Penal Angolano; partilhar informações falsas, enganosas ou difamatórias, em violação do artigo 174.º do Código Penal Angolano; violar direitos de propriedade intelectual de terceiros, contrariamente ao disposto na Lei n.º 4/90, de 10 de Março, sobre direitos de autor e direitos conexos; utilizar a plataforma para fins de spam ou de publicidade não autorizada; tentar aceder de forma não autorizada a sistemas ou dados da plataforma, o que configura crime punível nos termos da Lei n.º 7/17, de 16 de Fevereiro; praticar qualquer acto ilegal ao abrigo da legislação angolana em vigor.</p>
+
+    <h2>5. Conteúdo Publicado pelo Utilizador</h2>
+    <p>O utilizador mantém a titularidade dos direitos de propriedade intelectual sobre os conteúdos que publica na plataforma, nos termos da Lei n.º 4/90, de 10 de Março. Ao publicar conteúdo, o utilizador concede à Mayangue Service uma licença não exclusiva, gratuita e de âmbito mundial para exibir, distribuir e reproduzir esse conteúdo no interior da plataforma, sem que tal implique qualquer transferência de titularidade. O utilizador é o único responsável pelos conteúdos que publica e garante que não violam os direitos de terceiros nem a legislação angolana em vigor. A Mayangue Service reserva-se o direito de remover qualquer conteúdo que viole os presentes Termos ou que seja contrário à lei.</p>
+
+    <h2>6. Propriedade Intelectual da Plataforma</h2>
+    <p>Todos os elementos integrantes da aplicação ConnectAll Angola, incluindo código-fonte, design, logótipos, marcas, bases de dados e conteúdos editoriais, são propriedade exclusiva da Mayangue Service e encontram-se protegidos pela Lei n.º 4/90, de 10 de Março, sobre direitos de autor, e pelas demais disposições de propriedade intelectual aplicáveis em Angola. É proibida qualquer utilização, reprodução, distribuição ou modificação não autorizada desses elementos.</p>
+
+    <h2>7. Suspensão e Encerramento de Conta</h2>
+    <p>A Mayangue Service reserva-se o direito de suspender ou encerrar a conta do utilizador, com ou sem aviso prévio, nos seguintes casos: violação dos presentes Termos e Condições; comportamento que se revele prejudicial para a comunidade ou para outros utilizadores; utilização fraudulenta da plataforma; determinação judicial ou ordem emanada de autoridade competente angolana. A suspensão ou encerramento não afasta a responsabilidade civil ou criminal do utilizador pelos actos praticados durante a utilização da plataforma, nos termos do Código Civil e do Código Penal Angolanos.</p>
+
+    <h2>8. Limitação de Responsabilidade</h2>
+    <p>A Mayangue Service não garante a disponibilidade ininterrupta do serviço e não se responsabiliza por perdas de dados ou por danos indirectos resultantes da utilização da plataforma, nomeadamente interrupções técnicas, falhas de comunicação ou actos de terceiros, salvo nos casos em que a lei angolana imponha responsabilidade obrigatória. Em qualquer caso, a responsabilidade da Mayangue Service fica limitada ao disposto nos artigos 483.º e seguintes do Código Civil Angolano, relativos à responsabilidade por factos ilícitos.</p>
+
+    <h2>9. Modificações ao Serviço e aos Termos</h2>
+    <p>A Mayangue Service reserva-se o direito de modificar, suspender ou descontinuar funcionalidades da plataforma, bem como de actualizar os presentes Termos e Condições, mediante notificação prévia ao utilizador de pelo menos quinze dias, efectuada através da aplicação ou por correio electrónico. A continuação da utilização da plataforma após a data de entrada em vigor das alterações implica a aceitação dos novos termos.</p>
+
+    <h2>10. Lei Aplicável e Resolução de Conflitos</h2>
+    <p>O presente contrato é integralmente regido pela legislação da República de Angola. Qualquer litígio emergente da interpretação, validade ou execução do presente contrato será submetido à jurisdição dos tribunais angolanos competentes, sendo eleito como foro o tribunal da comarca de Luanda, nos termos do Código de Processo Civil Angolano e do artigo 29.º da Constituição da República de Angola, que consagra o direito ao acesso à justiça.</p>
+
+    <h2>11. Disposições Finais</h2>
+    <p>Se qualquer cláusula do presente contrato for considerada inválida, nula ou inaplicável por decisão judicial ou arbitral, as restantes cláusulas mantêm plena validade e eficácia, nos termos do princípio da redução do negócio jurídico previsto no artigo 292.º do Código Civil Angolano. A omissão de qualquer parte no exercício de um direito não constitui renúncia a esse direito.</p>
+
+    <h2>Referências Legais</h2>
+    <p>O presente contrato fundamenta-se nas seguintes disposições legais: Constituição da República de Angola, artigos 29.º, 32.º, 38.º e 77.º; Código Civil Angolano, aprovado pela Lei n.º 10/11, de 8 de Abril, artigos 122.º, 227.º, 292.º e 483.º; Código Penal Angolano, aprovado pela Lei n.º 38/20, de 11 de Novembro, artigos 71.º, 153.º, 154.º, 174.º e 195.º; Lei n.º 4/90, de 10 de Março — Lei sobre Direitos de Autor e Direitos Conexos; Lei n.º 22/11, de 17 de Junho — Lei de Protecção de Dados Pessoais; Lei n.º 23/11, de 20 de Junho — Lei das Comunicações Electrónicas e dos Serviços da Sociedade da Informação; Lei n.º 7/17, de 16 de Fevereiro — Lei de Protecção das Redes e Sistemas Informáticos.</p>
+
+    <div class="doc-footer">
+      <strong>Mayangue Service</strong><br>
+      Fornecedora da plataforma ConnectAll Angola<br>
+      Correio electrónico: privacidademayangueservicecta@gmail.com<br>
+      Localização: Luanda, República de Angola<br>
+      <span class="law-ref">Contrato regido pela legislação da República de Angola.</span>
+    </div>
+  </div>
+
+  <div class="section" id="cookies">
+    <p class="intro-text">A presente política explica como a Mayangue Service utiliza cookies e tecnologias equivalentes na aplicação ConnectAll Angola, e de que modo o utilizador pode gerir as suas preferências. O uso dessas tecnologias observa os princípios estabelecidos na Lei n.º 22/11, de 17 de Junho, e na Lei n.º 23/11, de 20 de Junho, que regulam a utilização de dados de tráfego e comunicações electrónicas em Angola.</p>
+
+    <h2>1. O que são Cookies e Tecnologias Equivalentes</h2>
+    <p>Cookies são pequenos ficheiros de texto armazenados no dispositivo do utilizador, que permitem identificar sessões e preferências. Na aplicação ConnectAll Angola, que funciona em ambiente móvel, utilizamos tecnologias funcionalmente equivalentes, nomeadamente tokens de sessão gerados pela Firebase Authentication, armazenamento local por intermédio do AsyncStorage do React Native, e identificadores de dispositivo. A utilização destas tecnologias está fundamentada no artigo 22.º da Lei n.º 23/11, de 20 de Junho, que regula o tratamento de dados de tráfego nos serviços de comunicações electrónicas.</p>
+
+    <h2>2. Tipos de Tecnologias Utilizadas</h2>
+    <p>A Mayangue Service utiliza as seguintes categorias de tecnologias de armazenamento local. As tecnologias essenciais são indispensáveis ao funcionamento da plataforma e incluem o token de autenticação Firebase Auth Token, que mantém a sessão do utilizador activa durante um período máximo de trinta dias, e o AsyncStorage local, que guarda preferências e dados para funcionamento offline de forma persistente. As tecnologias funcionais permitem personalizar a experiência do utilizador e incluem o armazenamento das preferências de tema visual e das configurações de idioma e região, com duração persistente. As tecnologias analíticas e de desempenho recolhem dados de forma anónima e agregada, através do Firebase Analytics durante um período de vinte e quatro meses, e do Firebase Performance Monitoring durante um período de trinta dias, com o objectivo de melhorar o desempenho e a qualidade da plataforma.</p>
+
+    <h2>3. Tecnologias Essenciais</h2>
+    <p>As tecnologias essenciais não podem ser desactivadas sem comprometer o funcionamento adequado da aplicação ConnectAll Angola. O acesso e a utilização da plataforma implicam a aceitação das mesmas, uma vez que são necessárias à execução do contrato de utilização, nos termos previstos no artigo 12.º da Lei n.º 22/11, de 17 de Junho. A desactivação destas tecnologias impedirá o utilizador de aceder à plataforma.</p>
+
+    <h2>4. Tecnologias Analíticas e de Desempenho</h2>
+    <p>A Mayangue Service utiliza o Firebase Analytics e o Firebase Performance Monitoring para compreender de que forma os utilizadores interagem com a aplicação, identificar problemas técnicos e melhorar o serviço prestado. Estes dados são recolhidos de forma anónima e agregada, não permitindo a identificação individual do utilizador. O tratamento destes dados está conforme o disposto no artigo 6.º da Lei n.º 22/11, de 17 de Junho, sendo realizado com fundamento nos interesses legítimos da Mayangue Service na melhoria contínua do serviço.</p>
+
+    <h2>5. Tecnologias de Terceiros</h2>
+    <p>A plataforma ConnectAll Angola recorre às seguintes soluções de terceiros, que podem implicar o tratamento de dados por entidades externas à Mayangue Service: Google Firebase, para os serviços de autenticação, base de dados em tempo real, análise de utilização e monitorização de desempenho; Expo SDK, como framework de desenvolvimento React Native. A utilização destas ferramentas está sujeita às políticas de privacidade das respectivas entidades fornecedoras, às quais a Mayangue Service vincula as garantias adequadas de protecção de dados, nos termos do artigo 20.º da Lei n.º 22/11, de 17 de Junho.</p>
+
+    <h2>6. Gestão das Preferências</h2>
+    <p>O utilizador pode gerir as suas preferências de recolha de dados dentro da própria aplicação, acedendo ao menu de Perfil, depois a Definições e, em seguida, a Privacidade, onde pode activar ou desactivar a recolha de dados analíticos e solicitar a eliminação dos seus dados. Adicionalmente, é possível eliminar os dados armazenados localmente directamente no dispositivo: em Android, acedendo a Definições, depois Aplicações, ConnectAll Angola, Armazenamento e Limpar dados; em iOS, acedendo a Definições, Geral, Armazenamento do iPhone, ConnectAll Angola e Apagar App.</p>
+
+    <h2>7. Consentimento</h2>
+    <p>Nos termos do artigo 13.º da Lei n.º 22/11, de 17 de Junho, o consentimento para o tratamento de dados deve ser livre, específico, informado e inequívoco. Ao utilizar a aplicação ConnectAll Angola pela primeira vez, o utilizador é informado sobre a utilização das tecnologias de armazenamento local descritas na presente política. A continuação da utilização implica a aceitação das tecnologias essenciais. O utilizador pode revogar o consentimento relativo às tecnologias analíticas em qualquer momento, nos termos do artigo 12.º, n.º 4, da Lei n.º 22/11, de 17 de Junho, sem que isso afecte a licitude do tratamento anteriormente efectuado.</p>
+
+    <h2>Referências Legais</h2>
+    <p>A presente política fundamenta-se nas seguintes disposições: Constituição da República de Angola, artigo 32.º — reserva da intimidade da vida privada; Lei n.º 22/11, de 17 de Junho — Lei de Protecção de Dados Pessoais, publicada no Diário da República, I Série, n.º 114; Lei n.º 23/11, de 20 de Junho — Lei das Comunicações Electrónicas e dos Serviços da Sociedade da Informação, em especial o artigo 22.º relativo aos dados de tráfego.</p>
+
+    <div class="doc-footer">
+      <strong>Mayangue Service</strong><br>
+      Responsável pelo tratamento de dados da plataforma ConnectAll Angola<br>
+      Correio electrónico: privacidadeemayangueservicecta@gmail.com<br>
+      Localização: Luanda, República de Angola<br>
+      <span class="law-ref">Documento elaborado em conformidade com a Lei n.º 22/11, de 17 de Junho, e demais legislação angolana aplicável.</span>
+    </div>
+  </div>
+
+  <div class="section" id="termos-recrutador">
+    <p class="intro-text">Última atualização: Junho de 2026. Bem-vindo à ConnectAll Angola. Ao criar uma conta de recrutador e utilizar a plataforma, concorda com os presentes Termos de Utilização.</p>
+    
+    <h2>1. Objetivo da Plataforma</h2>
+    <p>A ConnectAll Angola é uma plataforma destinada à ligação entre profissionais, empresas e recrutadores para fins de recrutamento, seleção e oportunidades profissionais.</p>
+
+    <h2>2. Elegibilidade</h2>
+    <p>Para utilizar uma conta de recrutador, o utilizador deve:</p>
+    <p>• Ter pelo menos 18 anos de idade;<br>
+    • Representar legitimamente uma empresa, organização ou atividade de recrutamento;<br>
+    • Fornecer informações verdadeiras e atualizadas;<br>
+    • Concordar com os presentes termos e políticas da plataforma.</p>
+
+    <h2>3. Responsabilidades do Recrutador</h2>
+    <p>O recrutador compromete-se a:</p>
+    <p>• Publicar apenas vagas reais e legítimas;<br>
+    • Fornecer descrições claras e precisas das oportunidades;<br>
+    • Tratar todos os candidatos com respeito e profissionalismo;<br>
+    • Não solicitar pagamentos aos candidatos;<br>
+    • Não recolher informações pessoais para fins ilegais;<br>
+    • Respeitar a legislação laboral aplicável.</p>
+
+    <h2>4. Verificação da Conta</h2>
+    <p>A ConnectAll poderá solicitar dados profissionais, e-mail corporativo, informações da empresa e documentação complementar quando necessário. A plataforma poderá suspender ou limitar contas que apresentem informações falsas ou suspeitas.</p>
+
+    <h2>5. Publicação de Vagas</h2>
+    <p>São proibidas vagas que promovam atividades ilegais, sejam enganosas ou fraudulentas, possuam conteúdo discriminatório, solicitem pagamentos dos candidatos ou divulguem informações falsas sobre salários, benefícios ou funções.</p>
+
+    <h2>6. Propriedade Intelectual</h2>
+    <p>Todo o conteúdo da plataforma, incluindo logótipos, design, funcionalidades, software e marcas, permanece propriedade da ConnectAll Angola.</p>
+
+    <h2>7. Suspensão ou Encerramento de Conta</h2>
+    <p>A ConnectAll poderá suspender ou encerrar contas que violarem estes termos, receberem denúncias comprovadas, publicarem conteúdo fraudulento ou tentarem manipular processos de recrutamento.</p>
+
+    <h2>8. Limitação de Responsabilidade</h2>
+    <p>A ConnectAll atua como intermediária tecnológica entre recrutadores e candidatos. A plataforma não garante contratações, qualidade dos candidatos ou resultados específicos dos processos seletivos.</p>
+
+    <h2>9. Alterações aos Termos</h2>
+    <p>A ConnectAll poderá atualizar estes Termos de Utilização sempre que necessário, notificando os utilizadores através da plataforma.</p>
+
+    <div class="doc-footer">
+      <strong>Mayangue Service</strong><br>
+      ConnectAll Angola — Departamento Jurídico<br>
+      Localização: Luanda, República de Angola
+    </div>
+  </div>
+
+  <div class="section" id="codigo-conduta-recrutador">
+    <p class="intro-text">CÓDIGO DE CONDUTA DOS RECRUTADORES. Ao utilizar uma conta de recrutador na ConnectAll Angola, o utilizador declara que leu, compreendeu e concorda com este Código de Conduta.</p>
+
+    <h2>1. Respeito e Profissionalismo</h2>
+    <p>Todos os recrutadores devem agir com integridade, respeitar candidatos e empresas, e comunicar de forma educada e transparente.</p>
+
+    <h2>2. Igualdade de Oportunidades</h2>
+    <p>É proibida qualquer discriminação baseada em: Género, Idade, Origem, Deficiência, Nacionalidade, Religião, Estado civil ou qualquer outra condição protegida por lei.</p>
+
+    <h2>3. Transparência</h2>
+    <p>Os recrutadores devem informar claramente os requisitos da vaga, divulgar condições reais de trabalho e fornecer informações verdadeiras sobre salários e benefícios quando aplicável.</p>
+
+    <h2>4. Proteção dos Dados dos Candidatos</h2>
+    <p>Os dados dos candidatos devem ser utilizados apenas para recrutamento, ser protegidos contra divulgação indevida e não ser partilhados sem autorização legítima.</p>
+
+    <h2>5. Proibição de Fraude</h2>
+    <p>É estritamente proibido cobrar dinheiro de candidatos, prometer empregos inexistentes, utilizar identidade falsa ou manipular resultados de seleção.</p>
+
+    <h2>6. Comunicação Responsável</h2>
+    <p>Os recrutadores devem evitar spam, assédio, linguagem ofensiva ou mensagens repetitivas ou abusivas.</p>
+
+    <h2>7. Denúncias e Fiscalização</h2>
+    <p>A ConnectAll poderá receber denúncias, investigar comportamentos inadequados, solicitar esclarecimentos e aplicar sanções quando necessário.</p>
+
+    <h2>8. Penalidades</h2>
+    <p>O incumprimento deste Código poderá resultar em advertência, suspensão temporária, remoção de vagas, perda de privilégios ou encerramento permanente da conta.</p>
+
+    <h2>9. Compromisso</h2>
+    <p>Ao utilizar uma conta de recrutador na ConnectAll Angola, o utilizador declara que leu, compreendeu e concorda com este Código de Conduta, comprometendo-se a atuar de forma ética, profissional e responsável em todos os processos de recrutamento realizados através da plataforma.</p>
+
+    <div class="doc-footer">
+      <strong>Mayangue Service</strong><br>
+      ConnectAll Angola — Departamento Jurídico<br>
+      Localização: Luanda, República de Angola
+    </div>
+  </div>
+
 </div>
 
 <script>
   function showTab(id, btn) {
-    document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.section').forEach(function(s) { s.classList.remove('active'); });
+    document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
     document.getElementById(id).classList.add('active');
     btn.classList.add('active');
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -206,44 +440,77 @@ export default function PoliticasScreen() {
   const router = useRouter();
   const { tipo } = useLocalSearchParams();
 
-  const scrollToSection = () => {
-    if (tipo === 'privacidade') return `<script>showTab('privacidade', document.querySelectorAll('.tab')[1]);</script>`;
-    if (tipo === 'cookies') return `<script>showTab('cookies', document.querySelectorAll('.tab')[2]);</script>`;
-    return '';
-  };
-
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <Ionicons name="arrow-back" size={24} color="#1F1F1F" />
+        <TouchableOpacity
+          onPress={() => router.back()}
+          style={styles.backBtn}
+        >
+          <Ionicons
+            name="arrow-back"
+            size={24}
+            color="#1F1F1F"
+          />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>{TITULOS[tipo] || 'Políticas Legais'}</Text>
+
+        <Text style={styles.headerTitle}>
+          {TITULOS[tipo] || 'Políticas Legais'}
+        </Text>
+
         <View style={{ width: 32 }} />
       </View>
+
       <WebView
+        originWhitelist={['*']}
         source={{ html: HTML_CONTENT }}
         style={{ flex: 1 }}
-        startInLoadingState
-        onLoadEnd={(e) => {
-          if (tipo === 'privacidade') {
-            e.target.injectJavaScript("showTab('privacidade', document.querySelectorAll('.tab')[1]); true;");
-          } else if (tipo === 'cookies') {
-            e.target.injectJavaScript("showTab('cookies', document.querySelectorAll('.tab')[2]); true;");
-          }
-        }}
+        javaScriptEnabled={true}
+        domStorageEnabled={true}
+        startInLoadingState={true}
+        injectedJavaScript={`
+          setTimeout(function() {
+            var currentTipo = "${tipo || ''}";
+            var tabs = document.querySelectorAll('.tab-btn');
+            if (currentTipo === "contrato") {
+              showTab('contrato', tabs[1]);
+            } else if (currentTipo === "cookies") {
+              showTab('cookies', tabs[2]);
+            } else if (currentTipo === "termos-recrutador") {
+              showTab('termos-recrutador', tabs[3]);
+            } else if (currentTipo === "codigo-conduta-recrutador") {
+              showTab('codigo-conduta-recrutador', tabs[4]);
+            } else {
+              showTab('privacidade', tabs[0]);
+            }
+          }, 300);
+          true;
+        `}
       />
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#fff' },
-  header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 16, paddingVertical: 12,
-    borderBottomWidth: 0.5, borderBottomColor: '#EAEAEA',
+  safe: {
+    flex: 1,
+    backgroundColor: '#fff'
   },
-  backBtn: { padding: 4 },
-  headerTitle: { fontSize: 15, fontWeight: '700', color: '#1F1F1F' },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#EAEAEA',
+  },
+  backBtn: {
+    padding: 4,
+  },
+  headerTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#1F1F1F',
+  },
 });

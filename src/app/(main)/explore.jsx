@@ -48,17 +48,15 @@ export default function ExploreScreen() {
   const [todosUtilizadores, setTodosUtilizadores] = useState([]);
   const [carregando, setCarregando] = useState(false);
 
-  // ✅ CORRIGIDO: só carrega quando o utilizador está autenticado
   useEffect(() => {
-    if (!user) return; // aguarda autenticação antes de fazer query
-
+    if (!user) return;
     const carregar = async () => {
       setCarregando(true);
       try {
         const snap = await getDocs(collection(db, 'users'));
         const lista = snap.docs
           .map(d => ({ uid: d.id, ...d.data() }))
-          .filter(u => u.uid !== user.uid && u.nome); // exclui o próprio e sem nome
+          .filter(u => u.uid !== user.uid && u.nome);
         setTodosUtilizadores(lista);
       } catch (err) {
         console.log('Erro ao carregar utilizadores:', err);
@@ -66,9 +64,8 @@ export default function ExploreScreen() {
         setCarregando(false);
       }
     };
-
     carregar();
-  }, [user]); // depende do user — só dispara quando autenticado
+  }, [user]);
 
   const categoriasFiltradas = CATEGORIAS.filter(c =>
     c.nome.toLowerCase().includes(pesquisa.toLowerCase())
@@ -79,6 +76,13 @@ export default function ExploreScreen() {
     p.area?.toLowerCase().includes(pesquisa.toLowerCase()) ||
     p.cidade?.toLowerCase().includes(pesquisa.toLowerCase())
   );
+
+  const verPerfil = (utilizador) => {
+    router.push({
+      pathname: '/(main)/perfil-publico',
+      params: { uid: utilizador.uid },
+    });
+  };
 
   const iniciarConversa = (utilizador) => {
     router.push({
@@ -94,7 +98,6 @@ export default function ExploreScreen() {
   return (
     <SafeAreaView style={styles.safe}>
 
-      {/* Header */}
       <View style={styles.header}>
         <View>
           <Text style={styles.title}>Explorar</Text>
@@ -103,7 +106,6 @@ export default function ExploreScreen() {
         <Ionicons name="options-outline" size={20} color="#9B9B9B" />
       </View>
 
-      {/* Barra de pesquisa */}
       <View style={styles.searchWrap}>
         <Ionicons name="search-outline" size={15} color="#ABABAB" style={{ marginRight: 9 }} />
         <TextInput
@@ -123,29 +125,23 @@ export default function ExploreScreen() {
         )}
       </View>
 
-      {/* Tabs */}
       <View style={styles.tabsWrap}>
         <TouchableOpacity
           style={[styles.tab, tabActiva === 'categorias' && styles.tabActiva]}
           onPress={() => setTabActiva('categorias')}
           activeOpacity={0.7}
         >
-          <Text style={[styles.tabText, tabActiva === 'categorias' && styles.tabTextActiva]}>
-            Categorias
-          </Text>
+          <Text style={[styles.tabText, tabActiva === 'categorias' && styles.tabTextActiva]}>Categorias</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.tab, tabActiva === 'pessoas' && styles.tabActiva]}
           onPress={() => setTabActiva('pessoas')}
           activeOpacity={0.7}
         >
-          <Text style={[styles.tabText, tabActiva === 'pessoas' && styles.tabTextActiva]}>
-            Pessoas
-          </Text>
+          <Text style={[styles.tabText, tabActiva === 'pessoas' && styles.tabTextActiva]}>Pessoas</Text>
         </TouchableOpacity>
       </View>
 
-      {/* Conteúdo */}
       {tabActiva === 'categorias' ? (
         <ScrollView showsVerticalScrollIndicator={false}>
           <Text style={styles.sectionLabel}>Áreas de actividade</Text>
@@ -155,10 +151,7 @@ export default function ExploreScreen() {
                 key={cat.id}
                 style={styles.catCard}
                 activeOpacity={0.7}
-                onPress={() => {
-                  setPesquisa(cat.nome);
-                  setTabActiva('pessoas');
-                }}
+                onPress={() => { setPesquisa(cat.nome); setTabActiva('pessoas'); }}
               >
                 <View style={styles.catIconWrap}>
                   <Ionicons name={cat.icon} size={16} color="#6B6B6B" />
@@ -181,10 +174,11 @@ export default function ExploreScreen() {
             </Text>
           }
           renderItem={({ item, index }) => (
-            <View style={[
-              styles.personCard,
-              index === pessoasFiltradas.length - 1 && styles.personCardLast,
-            ]}>
+            <TouchableOpacity
+              style={[styles.personCard, index === pessoasFiltradas.length - 1 && styles.personCardLast]}
+              activeOpacity={0.8}
+              onPress={() => verPerfil(item)}
+            >
               {/* Avatar */}
               <View style={styles.avatarWrap}>
                 {item.fotoURL ? (
@@ -206,9 +200,7 @@ export default function ExploreScreen() {
                     </View>
                   ) : null}
                   {item.area && item.cidade ? <View style={styles.dot} /> : null}
-                  {item.cidade ? (
-                    <Text style={styles.cidadeText}>{item.cidade}</Text>
-                  ) : null}
+                  {item.cidade ? <Text style={styles.cidadeText}>{item.cidade}</Text> : null}
                 </View>
               </View>
 
@@ -217,16 +209,20 @@ export default function ExploreScreen() {
                 <TouchableOpacity
                   style={styles.msgBtn}
                   activeOpacity={0.7}
-                  onPress={() => iniciarConversa(item)}
+                  onPress={(e) => { e.stopPropagation(); iniciarConversa(item); }}
                 >
                   <Ionicons name="chatbubble-outline" size={13} color="#1677F2" />
                   <Text style={styles.msgBtnText}>SMS</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.connectBtn} activeOpacity={0.7}>
-                  <Text style={styles.connectBtnText}>Conectar</Text>
+                <TouchableOpacity
+                  style={styles.connectBtn}
+                  activeOpacity={0.7}
+                  onPress={() => verPerfil(item)}
+                >
+                  <Text style={styles.connectBtnText}>Ver perfil</Text>
                 </TouchableOpacity>
               </View>
-            </View>
+            </TouchableOpacity>
           )}
           ListEmptyComponent={() => (
             <View style={styles.emptyWrap}>
@@ -277,10 +273,7 @@ const styles = StyleSheet.create({
     borderRadius: 12, borderWidth: 0.5, borderColor: '#E4E4E4',
     padding: 13, flexDirection: 'row', alignItems: 'center', gap: 11,
   },
-  catIconWrap: {
-    width: 32, height: 32, borderRadius: 8,
-    backgroundColor: '#F0EFED', alignItems: 'center', justifyContent: 'center',
-  },
+  catIconWrap: { width: 32, height: 32, borderRadius: 8, backgroundColor: '#F0EFED', alignItems: 'center', justifyContent: 'center' },
   catNome: { fontSize: 12, fontWeight: '500', color: '#1A1A1A', flexShrink: 1, lineHeight: 16 },
   personCard: {
     flexDirection: 'row', alignItems: 'center',
@@ -289,34 +282,20 @@ const styles = StyleSheet.create({
   },
   personCardLast: { borderBottomWidth: 0 },
   avatarWrap: {},
-  avatar: {
-    width: 42, height: 42, borderRadius: 21,
-    backgroundColor: '#F0EFED', borderWidth: 0.5, borderColor: '#E4E4E4',
-    alignItems: 'center', justifyContent: 'center',
-  },
+  avatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#F0EFED', borderWidth: 0.5, borderColor: '#E4E4E4', alignItems: 'center', justifyContent: 'center' },
   avatarImage: { width: 42, height: 42, borderRadius: 21 },
   avatarText: { fontSize: 13, fontWeight: '500', color: '#6B6B6B', letterSpacing: 0.5 },
   personInfo: { flex: 1 },
   personName: { fontSize: 13, fontWeight: '500', color: '#1A1A1A' },
   personMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 3 },
-  areaBadge: {
-    backgroundColor: '#F0EFED', borderWidth: 0.5, borderColor: '#E4E4E4',
-    borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2,
-  },
+  areaBadge: { backgroundColor: '#F0EFED', borderWidth: 0.5, borderColor: '#E4E4E4', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 },
   areaBadgeText: { fontSize: 10, fontWeight: '500', color: '#888888' },
   dot: { width: 2, height: 2, borderRadius: 1, backgroundColor: '#ABABAB' },
   cidadeText: { fontSize: 11, color: '#ABABAB' },
   botoesWrap: { flexDirection: 'row', gap: 6, alignItems: 'center' },
-  msgBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    borderWidth: 1, borderColor: '#1677F2', borderRadius: 20,
-    paddingHorizontal: 10, paddingVertical: 5, backgroundColor: '#EEF4FF',
-  },
+  msgBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, borderWidth: 1, borderColor: '#1677F2', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5, backgroundColor: '#EEF4FF' },
   msgBtnText: { fontSize: 11, fontWeight: '600', color: '#1677F2' },
-  connectBtn: {
-    borderWidth: 0.5, borderColor: '#C8C8C8', borderRadius: 20,
-    paddingHorizontal: 13, paddingVertical: 5, backgroundColor: 'transparent',
-  },
+  connectBtn: { borderWidth: 0.5, borderColor: '#C8C8C8', borderRadius: 20, paddingHorizontal: 13, paddingVertical: 5 },
   connectBtnText: { fontSize: 11, fontWeight: '500', color: '#6B6B6B' },
   emptyWrap: { alignItems: 'center', paddingTop: 60, gap: 10 },
   emptyText: { fontSize: 14, color: '#ABABAB' },
