@@ -9,9 +9,10 @@ import {
   updateDoc,
   where,
 } from 'firebase/firestore';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Linking,
   Modal,
   ScrollView,
@@ -54,8 +55,13 @@ export default function CandidatosScreen() {
 
   const semPermissao = !user || (vagaAutorUid && vagaAutorUid !== user.uid);
 
-  useState(() => {
+  // Escuta em tempo real as candidaturas desta vaga.
+  // (Antes usava useState em vez de useEffect: a função só corria uma vez no
+  // "estado inicial preguiçoso" e nunca era re-executada se vagaId mudasse,
+  // além de o cleanup nunca ser chamado corretamente — corrigido para useEffect.)
+  useEffect(() => {
     if (!vagaId || semPermissao) { setCarregando(false); return; }
+    setCarregando(true);
     const q = query(collection(db, 'candidaturas'), where('vagaId', '==', vagaId), orderBy('timestamp', 'desc'));
     const unsub = onSnapshot(q, snap => {
       setCandidaturas(snap.docs.map(d => ({ id: d.id, ...d.data() })));
@@ -63,7 +69,7 @@ export default function CandidatosScreen() {
     }, err => { console.log('Erro candidaturas:', err); setCarregando(false); });
     return unsub;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [vagaId]);
+  }, [vagaId, semPermissao]);
 
   const contagens = useMemo(() => {
     const base = { todos: candidaturas.length };
@@ -80,18 +86,29 @@ export default function CandidatosScreen() {
       await updateDoc(doc(db, 'candidaturas', candidatura.id), { status: novoEstado });
       setCandidatoSelecionado(prev => (prev && prev.id === candidatura.id ? { ...prev, status: novoEstado } : prev));
     } catch (e) {
-      console.log('Erro ao atualizar estado:', e);
+      Alert.alert('Erro', 'Não foi possível atualizar o estado da candidatura.');
     }
   };
 
   const abrirCV = (url) => {
-    if (!url) return;
-    Linking.openURL(url).catch(() => {});
+    if (!url) {
+      Alert.alert('Indisponível', 'Este candidato não anexou currículo.');
+      return;
+    }
+    Linking.openURL(url).catch(() =>
+      Alert.alert('Erro', 'Não foi possível abrir o currículo. O ficheiro pode ter sido removido.')
+    );
   };
 
   const contactarEmail = (candidatura) => {
-    if (!candidatura.email) return;
-    Linking.openURL(`mailto:${candidatura.email}?subject=${encodeURIComponent('Sobre a tua candidatura — ' + (vagaTitulo || ''))}`).catch(() => {});
+    if (!candidatura.email) {
+      Alert.alert('Indisponível', 'Este candidato não tem e-mail registado.');
+      return;
+    }
+    const mailto = `mailto:${candidatura.email}?subject=${encodeURIComponent('Sobre a tua candidatura — ' + (vagaTitulo || ''))}`;
+    Linking.openURL(mailto).catch(() =>
+      Alert.alert('Erro', 'Não foi possível abrir a aplicação de e-mail.')
+    );
   };
 
   if (semPermissao) {

@@ -93,13 +93,16 @@ async function lerDocumentoUserComRetry(uidAtual: string, tentativas = 3): Promi
 }
 
 Notifications.setNotificationHandler({
-  handleNotification: async (): Promise<Notifications.NotificationBehavior> => ({
-    shouldShowAlert:  true,
-    shouldPlaySound:  true,
-    shouldSetBadge:   false,
-    shouldShowBanner: true,
-    shouldShowList:   true,
-  }),
+  handleNotification: async (notification): Promise<Notifications.NotificationBehavior> => {
+    const data = notification.request.content.data as Record<string, string>;
+    const eChamada = data?.tipo === 'chamada_recebida';
+    return {
+      shouldPlaySound:  eChamada,
+      shouldSetBadge:   false,
+      shouldShowBanner: true,
+      shouldShowList:   true,
+    };
+  },
 });
 
 function AppContent() {

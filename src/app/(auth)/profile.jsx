@@ -5,6 +5,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
+import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator, Alert, Image, KeyboardAvoidingView, Modal,
@@ -14,7 +15,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import SeletorDataNascimento from '../../components/SeletorDataNascimento';
 import { UploadBtnComPreview, useVisualizador } from '../../components/VisualizadorFicheiro';
-import { app, auth, db } from '../../config/firebase';
+import { app, auth, db, storage } from '../../config/firebase';
 import { uploadFotoPerfil } from '../../config/utils/uploadFoto';
 import { useUser } from '../../context/UserContext';
 
@@ -295,6 +296,28 @@ export default function ProfileScreen() {
   const toggleComp = (lista, setLista, item) =>
     setLista(prev => prev.includes(item) ? prev.filter(i=>i!==item) : [...prev, item]);
 
+  // ────────────────────────────────────────────────────────────────────────
+  // Upload de documentos para o Firebase Storage
+  // ────────────────────────────────────────────────────────────────────────
+  // O DocumentPicker (escolherDocumento acima) devolve apenas um caminho
+  // LOCAL do telemóvel (ex: file:///...). Esse caminho só existe no
+  // aparelho de quem o escolheu — se for gravado tal e qual no Firestore,
+  // ninguém mais (ex: um recrutador a "Ver currículo" noutro telemóvel)
+  // consegue abrir o ficheiro. Por isso, antes de gravar o perfil, cada
+  // documento é carregado para o Firebase Storage e o que fica guardado
+  // é o link público (https://...) devolvido por getDownloadURL.
+  const uploadDocumentoStorage = async (uidAlvo, uriLocal, pasta) => {
+    if (!uriLocal) return null;
+    if (uriLocal.startsWith('http')) return uriLocal; // já é um link remoto, nada a fazer
+    const resposta = await fetch(uriLocal);
+    const blob = await resposta.blob();
+    const extensao = (uriLocal.split('.').pop() || 'pdf').split('?')[0];
+    const caminho = `documentos/${uidAlvo}/${pasta}-${Date.now()}.${extensao}`;
+    const storageRef = ref(storage, caminho);
+    await uploadBytes(storageRef, blob);
+    return await getDownloadURL(storageRef);
+  };
+
   const enviarCodigoEmailLocal = () => {
     const cod = Math.floor(100000+Math.random()*900000).toString();
     setCodigoEmailGerado(cod); setEmailEnviado(true);
@@ -447,6 +470,10 @@ export default function ProfileScreen() {
   // (auth.currentUser já tem uid — autenticação por telefone já
   // aconteceu em register-phone.jsx). Não há OTP de email a fazer:
   // grava-se o perfil directamente e segue para o feed.
+  //
+  // Neste ponto o perfil ainda não tem documentos (o passo 8 de
+  // Documentos só existe no fluxo completo/edição, que acontece depois,
+  // já dentro da app) — por isso não há upload de ficheiros a fazer aqui.
   const finalizarContaTelefone = async () => {
     setEnviando(true);
     try {
@@ -460,6 +487,35 @@ export default function ProfileScreen() {
       const pendenteStr = await AsyncStorage.getItem('_registoPendente');
       const pendente = pendenteStr ? JSON.parse(pendenteStr) : {};
 
+      // ── Carrega para o Storage qualquer documento já escolhido nesta sessão ──
+      let urlBilhete = uriBilhete;
+      let urlCV = uriCV;
+      let urlCertificados = uriCertificados;
+      let urlCartaConducao = uriCartaConducao;
+      let urlPortefolio = uriPortefolio;
+      let urlDiploma = uriDiploma;
+      try {
+        [urlBilhete, urlCV, urlCertificados, urlCartaConducao, urlPortefolio, urlDiploma] = await Promise.all([
+          uploadDocumentoStorage(uid, uriBilhete, 'bi'),
+          uploadDocumentoStorage(uid, uriCV, 'cv'),
+          uploadDocumentoStorage(uid, uriCertificados, 'certificados'),
+          uploadDocumentoStorage(uid, uriCartaConducao, 'carta-conducao'),
+          uploadDocumentoStorage(uid, uriPortefolio, 'portefolio'),
+          uploadDocumentoStorage(uid, uriDiploma, 'diploma'),
+        ]);
+      } catch (uploadErr) {
+        console.log('[Profile finalizarContaTelefone] erro ao carregar documentos:', uploadErr?.message);
+        Alert.alert('Erro', 'Não foi possível carregar um dos documentos. Verifica a tua ligação à internet e tenta novamente.');
+        setEnviando(false);
+        return;
+      }
+      setUriBilhete(urlBilhete);
+      setUriCV(urlCV);
+      setUriCertificados(urlCertificados);
+      setUriCartaConducao(urlCartaConducao);
+      setUriPortefolio(urlPortefolio);
+      setUriDiploma(urlDiploma);
+
       const dadosPerfil = {
         nome: nome.trim(), dataNasc, genero, nacionalidade, estadoCivil,
         telPrincipal: telPrincipal || pendente.telefone || '', telAlternativo,
@@ -468,8 +524,9 @@ export default function ProfileScreen() {
         situacaoProf, pretensaoSalarial, disponibilidade,
         formacoes, experiencias, certificacoes,
         competenciasTecnicas: compTecnicas, competenciasPessoais: compPessoais,
-        idiomas, uriBilhete, uriCV, cvUrl: uriCV,
-        uriCertificados, uriCartaConducao, uriPortefolio, uriDiploma,
+        idiomas, uriBilhete: urlBilhete, uriCV: urlCV, cvUrl: urlCV,
+        uriCertificados: urlCertificados, uriCartaConducao: urlCartaConducao,
+        uriPortefolio: urlPortefolio, uriDiploma: urlDiploma,
         linkedin, github, behance, website, emailVerificado,
         telVerificado: true,
         uid,
@@ -517,6 +574,38 @@ export default function ProfileScreen() {
         } catch {}
       }
 
+      // ── Carrega para o Storage qualquer documento novo (caminho local) ──
+      // Documentos que já são um link remoto (ex: mantidos de uma gravação
+      // anterior) não voltam a ser carregados — uploadDocumentoStorage
+      // devolve-os tal e qual.
+      let urlBilhete = uriBilhete;
+      let urlCV = uriCV;
+      let urlCertificados = uriCertificados;
+      let urlCartaConducao = uriCartaConducao;
+      let urlPortefolio = uriPortefolio;
+      let urlDiploma = uriDiploma;
+      try {
+        [urlBilhete, urlCV, urlCertificados, urlCartaConducao, urlPortefolio, urlDiploma] = await Promise.all([
+          uploadDocumentoStorage(uid, uriBilhete, 'bi'),
+          uploadDocumentoStorage(uid, uriCV, 'cv'),
+          uploadDocumentoStorage(uid, uriCertificados, 'certificados'),
+          uploadDocumentoStorage(uid, uriCartaConducao, 'carta-conducao'),
+          uploadDocumentoStorage(uid, uriPortefolio, 'portefolio'),
+          uploadDocumentoStorage(uid, uriDiploma, 'diploma'),
+        ]);
+      } catch (uploadErr) {
+        console.log('[Profile submeter] erro ao carregar documentos:', uploadErr?.message);
+        Alert.alert('Erro', 'Não foi possível carregar um dos documentos. Verifica a tua ligação à internet e tenta novamente.');
+        setEnviando(false);
+        return;
+      }
+      setUriBilhete(urlBilhete);
+      setUriCV(urlCV);
+      setUriCertificados(urlCertificados);
+      setUriCartaConducao(urlCartaConducao);
+      setUriPortefolio(urlPortefolio);
+      setUriDiploma(urlDiploma);
+
       const dadosPerfil = {
         nome: nome.trim(), dataNasc, genero, nacionalidade, estadoCivil,
         telPrincipal, telAlternativo, email, provincia, municipio, endereco,
@@ -524,8 +613,9 @@ export default function ProfileScreen() {
         situacaoProf, pretensaoSalarial, disponibilidade,
         formacoes, experiencias, certificacoes,
         competenciasTecnicas: compTecnicas, competenciasPessoais: compPessoais,
-        idiomas, uriBilhete, uriCV, cvUrl: uriCV,
-        uriCertificados, uriCartaConducao, uriPortefolio, uriDiploma,
+        idiomas, uriBilhete: urlBilhete, uriCV: urlCV, cvUrl: urlCV,
+        uriCertificados: urlCertificados, uriCartaConducao: urlCartaConducao,
+        uriPortefolio: urlPortefolio, uriDiploma: urlDiploma,
         linkedin, github, behance, website, emailVerificado, telVerificado,
         fotoURL: urlFoto, tipoPerfil: 'utilizador', perfilCompleto: true,
         dataAtualizacao: serverTimestamp(),

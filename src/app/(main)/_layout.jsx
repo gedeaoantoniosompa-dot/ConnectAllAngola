@@ -272,6 +272,8 @@ export default function MainLayout() {
         <Tabs.Screen name="completar-perfil-recrutador"    options={{ href: null }} />
           <Tabs.Screen name="broadcast"    options={{ href: null }} />
           <Tabs.Screen name="watch/[id]"    options={{ href: null }} />
+          <Tabs.Screen name="pagina-empresa"    options={{ href: null }} />
+          <Tabs.Screen name="perfil-publicoempresa"    options={{ href: null }} />
     </Tabs>
   );
 }

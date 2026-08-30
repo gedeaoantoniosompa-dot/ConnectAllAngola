@@ -1,17 +1,22 @@
 import { Feather, Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
-import { useState } from 'react';
+import * as IntentLauncher from 'expo-intent-launcher';
+import * as Notifications from 'expo-notifications';
+import * as Sharing from 'expo-sharing';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Dimensions,
   Image,
   Modal,
+  Platform,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
-import { WebView } from 'react-native-webview';
 
 const { width: W, height: H } = Dimensions.get('window');
 
@@ -27,7 +32,78 @@ const C = {
   error:  '#CC1016',
 };
 
-// ── Detecta tipo pelo URI ─────────────────────────────────────────────────────
+// Chave onde guardamos a pasta que o utilizador escolheu da primeira vez
+// que descarregou um documento, para não voltar a perguntar em downloads
+// seguintes (só no Android — é o StorageAccessFramework que exige esta
+// permissão de pasta).
+const CHAVE_PASTA_DOWNLOADS = '_pastaDownloadsEscolhida';
+const CANAL_NOTIFICACOES_DOWNLOAD = 'downloads';
+
+// ── Notificações do sistema ────────────────────────────────────────────────
+// Mostra sempre a notificação mesmo com a app aberta (por omissão o
+// expo-notifications esconde-a nesse caso).
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: false,
+    shouldSetBadge: false,
+  }),
+});
+
+async function garantirPermissaoNotificacoes() {
+  const { status } = await Notifications.getPermissionsAsync();
+  if (status !== 'granted') {
+    await Notifications.requestPermissionsAsync();
+  }
+}
+
+async function garantirCanalAndroid() {
+  if (Platform.OS !== 'android') return;
+  await Notifications.setNotificationChannelAsync(CANAL_NOTIFICACOES_DOWNLOAD, {
+    name: 'Downloads',
+    importance: Notifications.AndroidImportance.DEFAULT,
+  });
+}
+
+// Abre o PDF já descarregado. No Android usa o URI content:// devolvido
+// pela SAF (funciona directamente com ACTION_VIEW, sem precisar de
+// FileProvider). No iOS não há "abrir com" nativo para um ficheiro solto
+// — reabre-se o ecrã de partilha, que é como se abre/gere ficheiros lá.
+async function abrirPdfDescarregado(dados) {
+  if (!dados?.ficheiroUri) return;
+  if (Platform.OS === 'android') {
+    try {
+      await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+        data: dados.ficheiroUri,
+        flags: 1, // FLAG_GRANT_READ_URI_PERMISSION
+        type: 'application/pdf',
+      });
+    } catch (e) {
+      Alert.alert('Erro', 'Não foi possível abrir o ficheiro. Podes encontrá-lo na pasta onde foi guardado.');
+    }
+  } else {
+    try {
+      const disponivel = await Sharing.isAvailableAsync();
+      if (disponivel) await Sharing.shareAsync(dados.ficheiroUri, { mimeType: 'application/pdf', UTI: 'com.adobe.pdf' });
+    } catch (e) {}
+  }
+}
+
+// Regista o listener de "toque na notificação" uma única vez para toda a
+// app (não por cada componente que usa este ficheiro), para nunca abrir o
+// ficheiro em duplicado.
+let listenerNotificacaoRegistado = false;
+function registarListenerNotificacaoDownload() {
+  if (listenerNotificacaoRegistado) return;
+  listenerNotificacaoRegistado = true;
+  Notifications.addNotificationResponseReceivedListener((resposta) => {
+    const dados = resposta.notification.request.content.data;
+    if (dados?.tipo === 'download-pdf') abrirPdfDescarregado(dados);
+  });
+}
+
+// ── Detecta tipo pelo URI (rápido, síncrono — usado só para a miniatura) ──────
 function tipoFicheiro(uri) {
   if (!uri) return 'desconhecido';
   const u = uri.toLowerCase().split('?')[0];
@@ -37,153 +113,192 @@ function tipoFicheiro(uri) {
   return 'pdf';
 }
 
-/**
- * HTML com PDF.js — CORRIGIDO para não trazer o PDF para a memória JS
- * do React Native. Em vez de converter para base64 manualmente (o que
- * causava OutOfMemoryError em PDFs grandes, por criar várias cópias do
- * ficheiro em memória), passamos apenas a URL/caminho do PDF, e o
- * PDF.js dentro do WebView faz o download/leitura e parsing internamente,
- * página a página, sem nunca carregar tudo de uma vez no heap do JS.
- *
- * `fonte` pode ser:
- *  - um URL remoto (https://...)   → PDF.js faz fetch directamente
- *  - um URI local (file://...)     → PDF.js lê via fetch local
- */
-function htmlPDFjs(fonte) {
-  // Escapa aspas simples para não quebrar a string JS dentro do HTML
-  const fonteEscapada = fonte.replace(/'/g, "\\'");
+// ── Detecta o tipo REAL do ficheiro (Content-Type do servidor) ────────────────
+// A extensão no URI nem sempre é fiável (ex: content:// no Android sem
+// extensão nenhuma), por isso confirmamos com um HEAD ao servidor antes de
+// decidir se mostramos a pré-visualização de imagem ou disparamos o
+// download do PDF.
+async function detetarTipoReal(uri) {
+  const ehRemoto = uri.startsWith('http://') || uri.startsWith('https://');
+  if (!ehRemoto) return tipoFicheiro(uri);
+  try {
+    const resposta = await fetch(uri, { method: 'HEAD' });
+    const contentType = (resposta.headers.get('content-type') || '').toLowerCase();
+    if (contentType.startsWith('image/')) return 'imagem';
+    if (contentType === 'application/pdf') return 'pdf';
+  } catch (e) {
+    // Pedido falhou — cai para a extensão como último recurso.
+  }
+  return tipoFicheiro(uri);
+}
 
-  return `<!DOCTYPE html>
-<html>
-<head>
-<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=yes">
-<style>
-  * { margin:0; padding:0; box-sizing:border-box; }
-  html, body { width:100%; background:#2b2b2b; }
-  #loading { position:fixed; top:0; left:0; right:0; bottom:0;
-    display:flex; flex-direction:column; align-items:center;
-    justify-content:center; color:#aaa; font-family:sans-serif;
-    font-size:14px; gap:12px; }
-  .spinner { width:36px; height:36px; border:3px solid #444;
-    border-top-color:#0A66C2; border-radius:50%;
-    animation:spin 0.8s linear infinite; }
-  @keyframes spin { to { transform:rotate(360deg); } }
-  canvas { display:block; margin:0 auto; max-width:100%; }
-  #erro { color:#f66; font-family:sans-serif; font-size:13px;
-    text-align:center; padding:32px; }
-</style>
-</head>
-<body>
-<div id="loading"><div class="spinner"></div><span>A carregar PDF…</span></div>
-<div id="container"></div>
-<div id="erro" style="display:none">Não foi possível renderizar o PDF.</div>
-
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<script>
-(function() {
-  pdfjsLib.GlobalWorkerOptions.workerSrc =
-    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-
-  const fonte = '${fonteEscapada}';
-
-  const container = document.getElementById('container');
-  const loading   = document.getElementById('loading');
-  const erroDiv   = document.getElementById('erro');
-
-  // Passamos a URL/URI directamente — o PDF.js faz o fetch e o parsing
-  // internamente em chunks, sem precisarmos de trazer os bytes para o
-  // contexto JS do React Native primeiro.
-  pdfjsLib.getDocument(fonte).promise.then(function(pdf) {
-    loading.style.display = 'none';
-    const total = pdf.numPages;
-
-    // Renderiza página a página, libertando cada canvas de uma vez,
-    // para manter o uso de memória do WebView controlado mesmo em
-    // documentos com muitas páginas.
-    const renderPagina = function(num) {
-      pdf.getPage(num).then(function(page) {
-        const viewport = page.getViewport({ scale: window.devicePixelRatio || 1.5 });
-        const canvas   = document.createElement('canvas');
-        canvas.style.marginBottom = '8px';
-        canvas.width  = viewport.width;
-        canvas.height = viewport.height;
-        canvas.style.width  = '100%';
-        container.appendChild(canvas);
-        page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise.then(function() {
-          if (num < total) renderPagina(num + 1);
-        });
-      });
-    };
-    renderPagina(1);
-  }).catch(function(err) {
-    console.log('PDF.js erro:', err);
-    loading.style.display = 'none';
-    erroDiv.style.display = 'block';
-  });
-})();
-</script>
-</body>
-</html>`;
+// ── Obtém (ou pede) a pasta de destino no Android via SAF ─────────────────────
+// Da primeira vez, mostra o seletor de pastas nativo do Android (o
+// utilizador deve escolher "Transferências"/"Downloads"). A permissão fica
+// persistida (AsyncStorage) e é reutilizada nos downloads seguintes, sem
+// voltar a perguntar — a não ser que o utilizador revogue a permissão nas
+// definições do telefone, caso em que pedimos de novo automaticamente.
+async function obterPastaDestinoAndroid() {
+  const guardada = await AsyncStorage.getItem(CHAVE_PASTA_DOWNLOADS);
+  if (guardada) {
+    try {
+      await FileSystem.StorageAccessFramework.readDirectoryAsync(guardada);
+      return guardada;
+    } catch (e) {
+      // Permissão revogada ou pasta removida — pede de novo abaixo.
+    }
+  }
+  const permissao = await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
+  if (!permissao.granted) return null;
+  await AsyncStorage.setItem(CHAVE_PASTA_DOWNLOADS, permissao.directoryUri);
+  return permissao.directoryUri;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Hook useVisualizador
 // ═══════════════════════════════════════════════════════════════════════════════
+// PDFs já não são mostrados dentro da app — em vez disso, "Baixar" mostra
+// uma notificação "A transferir...", descarrega o ficheiro directamente
+// para a pasta escolhida pelo utilizador (Android) e abre também o menu
+// de partilha; quando termina, a notificação passa a "Download concluído"
+// e fica na barra de notificações — tocar nela abre o PDF. Imagens
+// continuam a abrir no modal interno.
 export function useVisualizador() {
-  const [visivel, setVisivel]         = useState(false);
-  const [uri, setUri]                 = useState(null);
-  const [titulo, setTitulo]           = useState('');
-  const [tipo, setTipo]               = useState('imagem');
-  const [pdfFonte, setPdfFonte]       = useState(null); // URL/URI a passar ao PDF.js
-  const [carregando, setCarregando]   = useState(false);
-  const [erroLeitura, setErroLeitura] = useState(false);
+  const [visivel, setVisivel]     = useState(false);
+  const [uri, setUri]             = useState(null);
+  const [titulo, setTitulo]       = useState('');
+  const [baixando, setBaixando]   = useState(false);
+
+  // Trinco síncrono. O state "baixando" só é reflectido no próximo render,
+  // por isso não chega para bloquear cliques repetidos que aconteçam antes
+  // desse render — um ref actualiza-se de imediato, sem esperar por
+  // nenhum render, e por isso bloqueia mesmo a chamada seguinte que chegue
+  // ainda no mesmo ciclo de eventos.
+  const aBaixarRef = useRef(false);
+
+  useEffect(() => {
+    registarListenerNotificacaoDownload();
+  }, []);
+
+  const baixarPdf = async (uriParam, tituloParam = 'documento') => {
+    if (aBaixarRef.current) return; // já há um download em curso — ignora
+    aBaixarRef.current = true;
+    setBaixando(true);
+
+    const nomeLimpo = (tituloParam || 'documento').replace(/[^a-zA-Z0-9-_ ]/g, '').trim() || 'documento';
+    const nomeFicheiro = `${nomeLimpo}.pdf`;
+    const idNotificacao = `download-${nomeLimpo}`;
+
+    try {
+      await garantirPermissaoNotificacoes();
+      await garantirCanalAndroid();
+
+      // ── Notificação de início ──
+      await Notifications.scheduleNotificationAsync({
+        identifier: idNotificacao,
+        content: {
+          title: 'A transferir…',
+          body: nomeFicheiro,
+          data: { tipo: 'download-pdf' },
+        },
+        trigger: null,
+      });
+
+      const ehRemoto = uriParam.startsWith('http://') || uriParam.startsWith('https://');
+      const cacheDestino = `${FileSystem.cacheDirectory}${nomeFicheiro}`;
+
+      // 1) Garante sempre uma cópia local do ficheiro (remoto → download
+      //    nativo; local → cópia com extensão .pdf garantida).
+      if (ehRemoto) {
+        await FileSystem.downloadAsync(uriParam, cacheDestino);
+      } else {
+        await FileSystem.copyAsync({ from: uriParam, to: cacheDestino });
+      }
+
+      let uriParaAbrirNaNotificacao = cacheDestino;
+
+      if (Platform.OS === 'android') {
+        // 2a) Android — grava directamente na pasta escolhida pelo
+        //     utilizador (download real) E abre também o menu de
+        //     partilha para o mesmo ficheiro.
+        const pastaUri = await obterPastaDestinoAndroid();
+        if (!pastaUri) {
+          await Notifications.dismissNotificationAsync(idNotificacao).catch(() => {});
+          Alert.alert('Permissão necessária', 'É preciso autorizar o acesso a uma pasta para poder guardar o ficheiro.');
+          return;
+        }
+        const conteudoBase64 = await FileSystem.readAsStringAsync(cacheDestino, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        const ficheiroUri = await FileSystem.StorageAccessFramework.createFileAsync(
+          pastaUri,
+          nomeLimpo,
+          'application/pdf'
+        );
+        await FileSystem.writeAsStringAsync(ficheiroUri, conteudoBase64, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        uriParaAbrirNaNotificacao = ficheiroUri; // content:// — o que a notificação vai abrir
+
+        const disponivel = await Sharing.isAvailableAsync();
+        if (disponivel) {
+          await Sharing.shareAsync(cacheDestino, {
+            mimeType: 'application/pdf',
+            dialogTitle: tituloParam,
+          });
+        }
+      } else {
+        // 2b) iOS — não existe pasta de downloads pública; o ecrã nativo
+        //     de partilha (Guardar em Ficheiros, etc.) é o equivalente.
+        const disponivel = await Sharing.isAvailableAsync();
+        if (disponivel) {
+          await Sharing.shareAsync(cacheDestino, {
+            mimeType: 'application/pdf',
+            dialogTitle: tituloParam,
+            UTI: 'com.adobe.pdf',
+          });
+        }
+      }
+
+      // ── Notificação de conclusão (substitui a de início, mesmo id) ──
+      await Notifications.scheduleNotificationAsync({
+        identifier: idNotificacao,
+        content: {
+          title: 'Download concluído',
+          body: `${nomeFicheiro} — toca para abrir`,
+          data: { tipo: 'download-pdf', ficheiroUri: uriParaAbrirNaNotificacao },
+        },
+        trigger: null,
+      });
+    } catch (e) {
+      console.log('Erro ao baixar PDF:', e?.message || e);
+      await Notifications.dismissNotificationAsync(idNotificacao).catch(() => {});
+      Alert.alert('Erro', 'Não foi possível baixar o ficheiro. Verifica a tua ligação à internet.');
+    } finally {
+      aBaixarRef.current = false;
+      setBaixando(false);
+    }
+  };
 
   const abrir = async (uriParam, tituloParam = '') => {
     if (!uriParam) return;
-    const t = tipoFicheiro(uriParam);
-    setUri(uriParam);
-    setTitulo(tituloParam);
-    setTipo(t);
-    setPdfFonte(null);
-    setErroLeitura(false);
+
+    const t = await detetarTipoReal(uriParam);
 
     if (t === 'pdf') {
-      setCarregando(true);
-      setVisivel(true);
-      try {
-        const ehRemoto = uriParam.startsWith('http://') || uriParam.startsWith('https://');
-
-        if (ehRemoto) {
-          // ✅ URL remoto — passamos directamente ao PDF.js, que faz o
-          // próprio fetch dentro do WebView. Nada passa pela memória JS
-          // do React Native.
-          setPdfFonte(uriParam);
-        } else {
-          // ✅ Ficheiro local (file://, content://) — o WebView normalmente
-          // não consegue aceder directamente a estes URIs por sandboxing.
-          // Copiamos para a pasta de cache da app com um nome previsível,
-          // que o WebView (com allowFileAccess) consegue ler como
-          // file:// normal, sem qualquer conversão para base64.
-          const destino = `${FileSystem.cacheDirectory}preview_${Date.now()}.pdf`;
-          await FileSystem.copyAsync({ from: uriParam, to: destino });
-          setPdfFonte(destino);
-        }
-      } catch (e) {
-        console.log('Erro ao preparar PDF:', e);
-        setErroLeitura(true);
-      } finally {
-        setCarregando(false);
-      }
-    } else {
-      setVisivel(true);
+      baixarPdf(uriParam, tituloParam);
+      return;
     }
+
+    // Imagem — continua a abrir no modal interno.
+    setUri(uriParam);
+    setTitulo(tituloParam);
+    setVisivel(true);
   };
 
   const fechar = () => {
     setVisivel(false);
-    setPdfFonte(null);
     setUri(null);
-    setErroLeitura(false);
   };
 
   function Visualizador() {
@@ -196,7 +311,6 @@ export function useVisualizador() {
         statusBarTranslucent
       >
         <View style={vs.container}>
-          {/* Header */}
           <View style={vs.header}>
             <TouchableOpacity
               style={vs.fecharBtn}
@@ -210,51 +324,9 @@ export function useVisualizador() {
             </Text>
             <View style={{ width: 36 }} />
           </View>
-
-          {/* Corpo */}
           <View style={vs.corpo}>
-            {carregando ? (
-              <View style={vs.centrado}>
-                <ActivityIndicator size="large" color={C.azul} />
-                <Text style={vs.loadingTxt}>A carregar PDF…</Text>
-              </View>
-
-            ) : erroLeitura ? (
-              <View style={vs.centrado}>
-                <Feather name="alert-circle" size={40} color={C.error} />
-                <Text style={vs.erroTxt}>Não foi possível ler o ficheiro.</Text>
-                <TouchableOpacity style={vs.erroBtn} onPress={fechar}>
-                  <Text style={vs.erroBtnTxt}>Fechar</Text>
-                </TouchableOpacity>
-              </View>
-
-            ) : tipo === 'pdf' && pdfFonte ? (
-              <WebView
-                style={vs.webview}
-                originWhitelist={['*']}
-                source={{ html: htmlPDFjs(pdfFonte) }}
-                javaScriptEnabled
-                domStorageEnabled
-                allowFileAccess
-                allowFileAccessFromFileURLs
-                allowUniversalAccessFromFileURLs
-                mixedContentMode="always"
-                scrollEnabled
-                showsVerticalScrollIndicator
-                startInLoadingState={false}
-                onError={(e) => {
-                  console.log('WebView erro:', e.nativeEvent);
-                  setErroLeitura(true);
-                }}
-              />
-
-            ) : tipo === 'imagem' && uri ? (
-              <Image
-                source={{ uri }}
-                style={vs.imagem}
-                resizeMode="contain"
-              />
-
+            {uri ? (
+              <Image source={{ uri }} style={vs.imagem} resizeMode="contain" />
             ) : (
               <View style={vs.centrado}>
                 <ActivityIndicator size="large" color={C.azul} />
@@ -266,7 +338,7 @@ export function useVisualizador() {
     );
   }
 
-  return { abrir, Visualizador };
+  return { abrir, Visualizador, baixando };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -280,7 +352,7 @@ export function UploadBtnComPreview({
   icone  = 'upload',
   altura = 110,
 }) {
-  const { abrir, Visualizador } = useVisualizador();
+  const { abrir, Visualizador, baixando } = useVisualizador();
   const ehPDF = tipoFicheiro(uri) === 'pdf';
   const nomeExibido = uri
     ? uri.split('/').pop().split('?')[0].slice(0, 30) || 'Ficheiro'
@@ -335,10 +407,17 @@ export function UploadBtnComPreview({
             <TouchableOpacity
               style={ub.verBtn}
               onPress={() => abrir(uri, titulo)}
+              disabled={baixando}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
-              <Feather name="eye" size={13} color={C.azul} />
-              <Text style={ub.verTxt}>Ver</Text>
+              {baixando ? (
+                <ActivityIndicator size="small" color={C.azul} />
+              ) : (
+                <>
+                  <Feather name={ehPDF ? 'download' : 'eye'} size={13} color={C.azul} />
+                  <Text style={ub.verTxt}>{ehPDF ? 'Baixar' : 'Ver'}</Text>
+                </>
+              )}
             </TouchableOpacity>
           </View>
         )}
@@ -356,13 +435,8 @@ const vs = StyleSheet.create({
   fecharBtn:    { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.1)', alignItems: 'center', justifyContent: 'center' },
   headerTitulo: { flex: 1, fontSize: 15, fontWeight: '700', color: C.branco, textAlign: 'center', marginHorizontal: 8 },
   corpo:        { flex: 1 },
-  webview:      { flex: 1, backgroundColor: '#2b2b2b' },
   imagem:       { width: W, height: H - 100, alignSelf: 'center' },
   centrado:     { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 14 },
-  loadingTxt:   { fontSize: 14, color: C.cinza3, fontWeight: '500' },
-  erroTxt:      { fontSize: 14, color: C.cinza3, textAlign: 'center', paddingHorizontal: 32 },
-  erroBtn:      { backgroundColor: C.azul, borderRadius: 20, paddingHorizontal: 24, paddingVertical: 10, marginTop: 8 },
-  erroBtnTxt:   { fontSize: 14, fontWeight: '700', color: C.branco },
 });
 
 const ub = StyleSheet.create({

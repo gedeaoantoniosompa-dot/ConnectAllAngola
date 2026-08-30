@@ -322,6 +322,33 @@ exports.notificarNovaNotificacao = onDocumentCreated(
   }
 );
 
+// Mesma coisa, mas para a segunda fonte que o useNotifications.js lê:
+// notificacoes/{uid}/items — é aqui que o painel de administração escreve.
+exports.notificarNovaNotificacaoAdmin = onDocumentCreated(
+  { document: 'notificacoes/{uid}/items/{itemId}', region: 'europe-west1' },
+  async (event) => {
+    const uid   = event.params.uid;
+    const dados = event.data?.data();
+    if (!dados) return null;
+
+    const token = await tokenDoUtilizador(uid);
+    if (!token) return null;
+
+    try {
+      await enviarPush({
+        token,
+        title: dados.titulo || dados.title || 'ConnectAll Angola',
+        body: dados.mensagem || dados.message || 'Tens uma nova notificação na app ConnectAll.',
+        channelId: 'default',
+        data: { tipo: dados.tipo || 'notificacao', notificacaoId: event.params.itemId, url: '/(main)/notifications' },
+      });
+    } catch (err) {
+      console.error('[Push] Erro ao notificar utilizador (admin):', err);
+    }
+    return null;
+  }
+);
+
 // Salas públicas são anunciadas aos utilizadores que têm um dispositivo registado.
 // Salas privadas continuam acessíveis apenas por convite/código.
 exports.notificarNovaSala = onDocumentCreated(

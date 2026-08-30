@@ -4,10 +4,13 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
   addDoc,
   collection,
+  deleteDoc,
+  doc,
   onSnapshot,
   orderBy,
   query,
   serverTimestamp,
+  updateDoc,
   where,
 } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
@@ -115,7 +118,7 @@ function postParaVaga(id, data) {
     exigirCV:            true,
     perguntasTriagem:    null,
     emailRecrutador:     null,
-    statusVaga:          'aberta',
+    statusVaga:          data.statusVaga || 'aberta',
     autorUid:            data.uid || null,
   };
 }
@@ -181,6 +184,10 @@ export default function VagasScreen() {
   const [postIdAberto, setPostIdAberto] = useState(postId || null);
   const [numCandidaturas, setNumCandidaturas] = useState(0);
 
+  // ── Gestão da vaga (dono) ──
+  const [atualizandoStatus, setAtualizandoStatus] = useState(false);
+  const [apagando, setApagando] = useState(false);
+
   // Escuta em tempo real todas as publicações do tipo "Oportunidade"
   useEffect(() => {
     const q = query(collection(db, 'posts'), where('tipo', '==', 'oportunidade'), orderBy('timestamp', 'desc'));
@@ -197,6 +204,17 @@ export default function VagasScreen() {
     const vaga = vagas.find(v => v.id === postIdAberto);
     if (vaga) { setVagaAtual(vaga); setTela('detalhes'); setPostIdAberto(null); }
   }, [postIdAberto, vagas]);
+
+  // Mantém vagaAtual sincronizada com o snapshot em tempo real (ex: quando o
+  // próprio dono muda o estado da vaga noutro dispositivo/sessão)
+  useEffect(() => {
+    if (!vagaAtual) return;
+    const atualizada = vagas.find(v => v.id === vagaAtual.id);
+    if (atualizada && atualizada.statusVaga !== vagaAtual.statusVaga) {
+      setVagaAtual(atualizada);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vagas]);
 
   // Se o utilizador é o dono da vaga em detalhes, escuta o nº de candidaturas
   useEffect(() => {
@@ -228,12 +246,16 @@ export default function VagasScreen() {
   const ehRecrutadorOuEmpresa = perfil?.tipoPerfil === 'recrutador' || perfil?.tipoPerfil === 'empresa';
   const ehAnonimo = !user || user.isAnonymous;
   const ehDonoDaVaga = !!(user && vagaAtual && vagaAtual.autorUid === user.uid);
+  const vagaFechada = vagaAtual?.statusVaga !== 'aberta';
 
-  const vagasFiltradas = pesquisa.trim()
-    ? vagas.filter(v =>
-        v.titulo.toLowerCase().includes(pesquisa.toLowerCase()) ||
-        v.empresa.toLowerCase().includes(pesquisa.toLowerCase()))
-    : vagas;
+  const vagasFiltradas = vagas.filter(v => {
+    const pesquisaOk = !pesquisa.trim()
+      || v.titulo.toLowerCase().includes(pesquisa.toLowerCase())
+      || v.empresa.toLowerCase().includes(pesquisa.toLowerCase());
+    // Vagas fechadas só aparecem na lista para o próprio dono (para as poder reabrir/gerir)
+    const visivelParaMim = v.statusVaga === 'aberta' || (user && v.autorUid === user.uid);
+    return pesquisaOk && visivelParaMim;
+  });
 
   // ── Abrir detalhes ──
   const abrirVaga = (vaga) => {
@@ -310,6 +332,49 @@ export default function VagasScreen() {
     } finally {
       setEnviando(false);
     }
+  };
+
+  // ── Ativar / fechar vaga (só o dono) ──
+  const alternarStatusVaga = async () => {
+    if (!vagaAtual || !ehDonoDaVaga) return;
+    const novoStatus = vagaAtual.statusVaga === 'aberta' ? 'fechada' : 'aberta';
+    setAtualizandoStatus(true);
+    try {
+      await updateDoc(doc(db, 'posts', vagaAtual.id), { statusVaga: novoStatus });
+      setVagaAtual(prev => (prev ? { ...prev, statusVaga: novoStatus } : prev));
+    } catch (e) {
+      Alert.alert('Erro', 'Não foi possível atualizar o estado da vaga.');
+    } finally {
+      setAtualizandoStatus(false);
+    }
+  };
+
+  // ── Apagar vaga (só o dono) ──
+  const apagarVaga = () => {
+    if (!vagaAtual || !ehDonoDaVaga) return;
+    Alert.alert(
+      'Apagar vaga',
+      'Tens a certeza que queres apagar esta vaga? Esta ação não pode ser desfeita e todas as candidaturas associadas deixarão de estar visíveis aqui.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Apagar',
+          style: 'destructive',
+          onPress: async () => {
+            setApagando(true);
+            try {
+              await deleteDoc(doc(db, 'posts', vagaAtual.id));
+              setTela('lista');
+              setVagaAtual(null);
+            } catch (e) {
+              Alert.alert('Erro', 'Não foi possível apagar a vaga. Tenta novamente.');
+            } finally {
+              setApagando(false);
+            }
+          },
+        },
+      ]
+    );
   };
 
   const reiniciarFluxo = () => {
@@ -421,6 +486,12 @@ export default function VagasScreen() {
                     )}
                   </View>
 
+                  {vaga.statusVaga !== 'aberta' && (
+                    <View style={s.vagaFechadaBadge}>
+                      <Text style={s.vagaFechadaTxt}>Vaga fechada</Text>
+                    </View>
+                  )}
+
                   {candidaturasFeitas[vaga.id] && (
                     <View style={s.jaCandidatadoBadge}>
                       <Ionicons name="checkmark-circle" size={13} color={C.verde} />
@@ -449,6 +520,7 @@ export default function VagasScreen() {
   // ═══════════════════════════════════════════════════════════
   if (tela === 'detalhes' && vagaAtual) {
     const jaCandidatado = !!candidaturasFeitas[vagaAtual.id];
+    const candidaturaBloqueada = vagaFechada && !jaCandidatado;
     return (
       <SafeAreaView style={s.safe}>
         <BloqueioAnonimo
@@ -495,6 +567,11 @@ export default function VagasScreen() {
                   <Text style={s.tipoPillTxt}>{vagaAtual.numFuncionarios} funcionários</Text>
                 </View>
               )}
+              {vagaFechada && (
+                <View style={[s.tipoPill, s.tipoPillFechada]}>
+                  <Text style={[s.tipoPillTxt, { color: C.vermelho }]}>Fechada</Text>
+                </View>
+              )}
             </View>
 
             {(vagaAtual.salario || vagaAtual.vagasDisponiveis || vagaAtual.dataLimite) && (
@@ -520,9 +597,14 @@ export default function VagasScreen() {
 
             <View style={s.detalhesBtnRow}>
               <TouchableOpacity
-                style={[s.btnCandidatarPrimario, jaCandidatado && s.btnCandidatadoCheio]}
+                style={[
+                  s.btnCandidatarPrimario,
+                  jaCandidatado && s.btnCandidatadoCheio,
+                  candidaturaBloqueada && s.btnCandidatarDesativado,
+                ]}
+                disabled={candidaturaBloqueada}
                 onPress={() => {
-                  if (jaCandidatado) return;
+                  if (jaCandidatado || candidaturaBloqueada) return;
                   verificarAcesso(() => {
                     if (vagaAtual.simplificada) {
                       candidatarSimplificada();
@@ -532,11 +614,15 @@ export default function VagasScreen() {
                   });
                 }}
               >
-                {vagaAtual.simplificada && !jaCandidatado && (
+                {vagaAtual.simplificada && !jaCandidatado && !vagaFechada && (
                   <SeloConnectAll size={18} />
                 )}
                 <Text style={s.btnCandidatarPrimarioTxt}>
-                  {jaCandidatado ? 'Candidatura enviada' : (vagaAtual.simplificada ? 'Candidatura simplificada' : 'Candidatar-se')}
+                  {jaCandidatado
+                    ? 'Candidatura enviada'
+                    : vagaFechada
+                      ? 'Vaga encerrada'
+                      : (vagaAtual.simplificada ? 'Candidatura simplificada' : 'Candidatar-se')}
                 </Text>
               </TouchableOpacity>
 
@@ -546,10 +632,46 @@ export default function VagasScreen() {
             </View>
 
             {ehDonoDaVaga && (
-              <TouchableOpacity style={s.btnVerCandidatos} onPress={irParaCandidatos}>
-                <Ionicons name="people" size={16} color={C.azul} />
-                <Text style={s.btnVerCandidatosTxt}>Ver candidatos ({numCandidaturas})</Text>
-              </TouchableOpacity>
+              <>
+                <TouchableOpacity style={s.btnVerCandidatos} onPress={irParaCandidatos}>
+                  <Ionicons name="people" size={16} color={C.azul} />
+                  <Text style={s.btnVerCandidatosTxt}>Ver candidatos ({numCandidaturas})</Text>
+                </TouchableOpacity>
+
+                <View style={s.gestaoVagaBox}>
+                  <View style={s.gestaoStatusRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={s.gestaoStatusTitulo}>Vaga ativa</Text>
+                      <Text style={s.gestaoStatusSub}>
+                        {vagaAtual.statusVaga === 'aberta'
+                          ? 'Visível na lista e a receber candidaturas'
+                          : 'Fechada — não aparece para candidatos'}
+                      </Text>
+                    </View>
+                    {atualizandoStatus
+                      ? <ActivityIndicator color={C.azul} size="small" />
+                      : (
+                        <Switch
+                          value={vagaAtual.statusVaga === 'aberta'}
+                          onValueChange={alternarStatusVaga}
+                          trackColor={{ false: C.cinza2, true: C.verde }}
+                          thumbColor={C.branco}
+                        />
+                      )}
+                  </View>
+
+                  <TouchableOpacity style={s.btnApagarVaga} onPress={apagarVaga} disabled={apagando}>
+                    {apagando
+                      ? <ActivityIndicator color={C.vermelho} size="small" />
+                      : (
+                        <>
+                          <Ionicons name="trash-outline" size={16} color={C.vermelho} />
+                          <Text style={s.btnApagarVagaTxt}>Apagar vaga</Text>
+                        </>
+                      )}
+                  </TouchableOpacity>
+                </View>
+              </>
             )}
 
             <View style={s.infoBox}>
@@ -696,7 +818,16 @@ export default function VagasScreen() {
           </Text>
 
           {temCv ? (
-            <View style={s.cvCard}>
+            <TouchableOpacity
+              style={s.cvCard}
+              onPress={() => {
+                const url = perfil?.cvUrl || perfil?.uriCV;
+                if (!url) return;
+                Linking.openURL(url).catch(() =>
+                  Alert.alert('Erro', 'Não foi possível abrir o currículo.')
+                );
+              }}
+            >
               <View style={s.cvIconeWrap}>
                 <Ionicons name="document-text" size={22} color={C.vermelho} />
               </View>
@@ -705,7 +836,7 @@ export default function VagasScreen() {
                 <Text style={s.cvMeta}>Carregado no teu perfil</Text>
               </View>
               <Ionicons name="checkmark-circle" size={20} color={C.verde} />
-            </View>
+            </TouchableOpacity>
           ) : (
             <View style={s.fotoPlaceholder}>
               <Feather name="file-text" size={36} color={C.cinza2} />
@@ -864,7 +995,17 @@ export default function VagasScreen() {
                 <View style={{ flex: 1 }}>
                   <Text style={s.cvNome} numberOfLines={1}>{perfil?.cvNome || 'Currículo.pdf'}</Text>
                 </View>
-                <Text style={s.cvVisualizar}>Visualizar</Text>
+                <TouchableOpacity
+                  onPress={() => {
+                    const url = perfil?.cvUrl || perfil?.uriCV;
+                    if (!url) return;
+                    Linking.openURL(url).catch(() =>
+                      Alert.alert('Erro', 'Não foi possível abrir o currículo.')
+                    );
+                  }}
+                >
+                  <Text style={s.cvVisualizar}>Visualizar</Text>
+                </TouchableOpacity>
               </View>
             ) : (
               <Text style={s.revisaoValor}>Sem currículo anexado</Text>
@@ -991,6 +1132,8 @@ const s = StyleSheet.create({
   melhorCandidatoTxt: { fontSize: 12, color: C.cinza4, fontWeight: '500' },
   vagaMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 },
   vagaMetaTxt: { fontSize: 11, color: C.cinza3 },
+  vagaFechadaBadge: { alignSelf: 'flex-start', backgroundColor: '#FDEBEB', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, marginTop: 8 },
+  vagaFechadaTxt: { fontSize: 10, fontWeight: '700', color: C.vermelho },
   jaCandidatadoBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 8 },
   jaCandidatadoTxt: { fontSize: 12, color: C.verde, fontWeight: '700' },
   cardDivider: { height: 1, backgroundColor: C.cinza1, marginHorizontal: 16 },
@@ -1008,6 +1151,7 @@ const s = StyleSheet.create({
   detalhesInfoSec: { fontSize: 13, color: C.cinza3, marginTop: 4 },
   tipoRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 14 },
   tipoPill: { borderWidth: 1.3, borderColor: C.cinza2, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8 },
+  tipoPillFechada: { borderColor: C.vermelho, backgroundColor: '#FDEBEB' },
   tipoPillTxt: { fontSize: 12, fontWeight: '600', color: C.cinza4 },
   resumoBox: { backgroundColor: C.cinza1, borderRadius: 10, padding: 14, marginTop: 16, gap: 8 },
   resumoLinha: { flexDirection: 'row', alignItems: 'center', gap: 8 },
@@ -1015,11 +1159,18 @@ const s = StyleSheet.create({
   detalhesBtnRow: { flexDirection: 'row', gap: 12, marginTop: 20 },
   btnCandidatarPrimario: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: C.azul, borderRadius: 26, paddingVertical: 14 },
   btnCandidatadoCheio: { backgroundColor: C.verde },
+  btnCandidatarDesativado: { backgroundColor: C.cinza2 },
   btnCandidatarPrimarioTxt: { color: C.branco, fontWeight: '700', fontSize: 15 },
   btnSalvar: { flex: 1, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: C.azul, borderRadius: 26 },
   btnSalvarTxt: { color: C.azul, fontWeight: '700', fontSize: 15 },
   btnVerCandidatos: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, borderWidth: 1.3, borderColor: C.azul, borderRadius: 22, paddingVertical: 12, marginTop: 12, backgroundColor: C.azulClaro },
   btnVerCandidatosTxt: { color: C.azul, fontWeight: '700', fontSize: 14 },
+  gestaoVagaBox: { marginTop: 14, borderWidth: 1, borderColor: C.cinza2, borderRadius: 10, padding: 14, gap: 12 },
+  gestaoStatusRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  gestaoStatusTitulo: { fontSize: 14, fontWeight: '700', color: C.preto },
+  gestaoStatusSub: { fontSize: 12, color: C.cinza3, marginTop: 2 },
+  btnApagarVaga: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, borderWidth: 1.3, borderColor: C.vermelho, borderRadius: 20, paddingVertical: 10 },
+  btnApagarVagaTxt: { color: C.vermelho, fontWeight: '700', fontSize: 13 },
   infoBox: { backgroundColor: C.cinza1, borderRadius: 10, padding: 14, marginTop: 22 },
   infoBoxTitulo: { fontSize: 14, fontWeight: '700', color: C.preto, marginBottom: 4 },
   infoBoxTxt: { fontSize: 13, color: C.cinza3, lineHeight: 19 },

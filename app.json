@@ -5,7 +5,7 @@
     "scheme": "connectallangola",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/logo-quadrado.png",
+    "icon": "./assets/icon-app.png",
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,
@@ -17,7 +17,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/logo-quadrado.png",
+        "foregroundImage": "./assets/icon-adaptive-foreground.png",
         "backgroundColor": "#ffffff"
       },
       "package": "com.connectallangola",
@@ -42,7 +42,7 @@
     "web": {
       "bundler": "metro",
       "output": "static",
-      "favicon": "./assets/logo-quadrado.png"
+      "favicon": "./assets/icon-app.png"
     },
     "plugins": [
       "expo-router",
@@ -51,7 +51,7 @@
       [
         "expo-notifications",
         {
-          "icon": "./assets/logo-quadrado.png",
+          "icon": "./assets/notification-icon-simplified.png",
           "color": "#1677F2",
           "defaultChannel": "default"
         }
@@ -89,7 +89,8 @@
       "expo-secure-store",
       "expo-video",
       "@react-native-community/datetimepicker",
-      "react-native-video"
+      "react-native-video",
+      "expo-localization"
     ],
     "extra": {
       "router": {},

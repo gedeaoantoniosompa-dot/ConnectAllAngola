@@ -205,8 +205,13 @@ export default function CriarVagaScreen() {
       // ── Notifica todos os candidatos — não bloqueia a mensagem de sucesso ──
       notificarCandidatos(novaVagaRef.id);
 
+      // Voltamos ao ecrã anterior (Vagas) com router.back() em vez de um
+      // caminho fixo (router.replace('/(main)/vagas')): chegámos aqui a
+      // partir de Vagas via router.push, por isso back() devolve-nos
+      // sempre ao sítio certo, sem depender do nome exacto da rota — foi
+      // esse caminho fixo que estava a causar o "page not found".
       Alert.alert('Vaga publicada', 'A tua vaga já está visível para candidatos.', [
-        { text: 'OK', onPress: () => router.replace('/(main)/vagas') },
+        { text: 'OK', onPress: () => router.back() },
       ]);
     } catch (e) {
       console.log('Erro ao publicar vaga:', e);

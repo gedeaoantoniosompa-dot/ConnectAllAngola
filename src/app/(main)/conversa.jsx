@@ -3,6 +3,19 @@
 //      contador começa nos dois lados, áudio/vídeo funciona
 // Fix 2: mensagens só são marcadas como lidas / naoLidas só é zerado
 //        quando a conversa está mesmo em primeiro plano (useFocusEffect)
+// Fix 3: ✅ REMOVIDO o envio de "notificação de mensagem" (enviarNotificacao)
+//        ao iniciar uma sala nova. Essa chamada escrevia na coleção raiz
+//        "notificacoes" — a MESMA fonte que useNotifications() lê para o
+//        sino e para a tela de Notificações — fazendo o evento "X iniciou
+//        uma conversa contigo" aparecer lá e contar no badge do sino, em
+//        vez de contar apenas no ícone de mensagem (que já é alimentado,
+//        correctamente, por naoLidas.{uid} no documento do chat via
+//        useUnreadMessages / useMensagensNaoLidas). Se no futuro quiseres
+//        um PUSH (FCM) avisando "X iniciou uma conversa" quando a app está
+//        fechada, usa o mesmo padrão da coleção "chamadas": grava um
+//        documento numa coleção dedicada (ex.: "eventosPush") que uma
+//        Cloud Function no backend ouve e transforma em push — sem nunca
+//        escrever em "notificacoes".
 
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -68,7 +81,6 @@ import {
   RtcSurfaceView,
   VideoSourceType,
 } from '../../services/agoraNative';
-import { enviarNotificacao } from '../../services/notificationService';
 
 const FUNDO_CHAT   = require('../../../assets/slideshow/fundo-chat.png');
 const AGORA_APP_ID = '4e413d4d82d14eeeb5f36a3853c846a3';
@@ -690,15 +702,26 @@ export default function ConversaScreen() {
         [`fotos.${outroUid}`]:outroPerfil.fotoURL||null,
       },{merge:true}).catch(()=>{});
 
-      // Sala nova (primeira vez que esta conversa é aberta) — notifica o outro utilizador
+      // ✅ FIX: sala nova (primeira vez que esta conversa é aberta).
+      // ANTES: chamava enviarNotificacao(...) que escrevia na coleção raiz
+      // "notificacoes" — a mesma fonte lida por useNotifications() para o
+      // sino e a tela de Notificações — fazendo "X iniciou uma conversa
+      // contigo" aparecer lá e contar no badge do sino.
+      // AGORA: não escrevemos nada em "notificacoes". O badge do ícone de
+      // mensagem já reflecte isto sozinho, porque o próprio setDoc acima
+      // (e qualquer primeira mensagem enviada a seguir) actualiza
+      // naoLidas.{uid} no documento do chat, que é lido em tempo real por
+      // useUnreadMessages/useMensagensNaoLidas — exactamente o contador
+      // que já aparece no ícone de balão do feed.
+      //
+      // Se um dia quiseres um PUSH (FCM) avisando "X iniciou uma conversa"
+      // quando a app está fechada, segue o mesmo padrão já usado para as
+      // chamadas: grava um documento numa colecção dedicada (ex.:
+      // "eventosPush") que uma Cloud Function no backend ouve e transforma
+      // em notificação push do sistema — sem nunca escrever em
+      // "notificacoes" do Firestore.
       if(novaSala){
-        enviarNotificacao(
-          outroUid,
-          user.uid,
-          'mensagem',
-          `${perfil.nome || 'Alguém'} iniciou uma conversa contigo`,
-          perfil.fotoURL || null
-        ).catch(()=>{});
+        // (sem escrita em "notificacoes" — ver nota acima)
       }
     })();
   },[outroPerfil,chatId]);

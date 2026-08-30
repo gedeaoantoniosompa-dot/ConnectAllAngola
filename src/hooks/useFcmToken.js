@@ -1,25 +1,22 @@
 /**
  * hooks/useFcmToken.js — ConnectAll Angola
+ *
+ * Nota: o campo chama-se "fcmToken" por histórico, mas o valor gravado é
+ * um Expo Push Token (getExpoPushTokenAsync) — é isso que a Cloud
+ * Function usa para enviar o push via API do Expo.
+ *
+ * O setNotificationHandler foi movido para o _layout.tsx (fica só um,
+ * lá, com a lógica de só tocar som em chamadas) — tê-lo aqui também
+ * causava dois handlers a competir, e o daqui nunca chegava a ganhar.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
 import { doc, setDoc } from 'firebase/firestore';
 import { useEffect } from 'react';
 import { Platform } from 'react-native';
 import { db } from '../config/firebase';
 import { useUser } from '../context/UserContext';
-
-Notifications.setNotificationHandler({
-  handleNotification: async (notification) => {
-    const data = notification.request.content.data;
-    const eChamada = data?.tipo === 'chamada_recebida';
-    return {
-      shouldShowAlert: true,
-      shouldPlaySound: eChamada,
-      shouldSetBadge:  false,
-    };
-  },
-});
 
 export function useFcmToken() {
   const { user } = useUser();
@@ -63,7 +60,13 @@ export function useFcmToken() {
         });
       }
 
-      const tokenData = await Notifications.getExpoPushTokenAsync();
+      // projectId explícito — sem isto, getExpoPushTokenAsync() pode falhar
+      // ou devolver token errado em builds standalone/EAS (fora do Expo Go).
+      const projectId =
+        Constants.expoConfig?.extra?.eas?.projectId ||
+        Constants.easConfig?.projectId;
+
+      const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
       const token = tokenData.data;
       if (!token) return;
 
