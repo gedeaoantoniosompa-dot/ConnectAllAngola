@@ -11,7 +11,7 @@
   "engines": {
     "node": "22"
   },
-  "main": "index.js",
+  "main": "adminEntry.js",
   "dependencies": {
     "@aws-sdk/client-rekognition": "^3.0.0",
     "@react-native-community/audio-toolkit": "^2.0.3",
