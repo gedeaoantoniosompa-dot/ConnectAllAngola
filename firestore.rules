@@ -17,7 +17,6 @@ service cloud.firestore {
     }
 
     // ── Configurações de sons ──
-    // Apenas administradores podem alterar sons do sistema.
     match /configuracoes/sons {
       allow read: if true;
       allow write: if eAdmin();
@@ -26,7 +25,8 @@ service cloud.firestore {
     // ── Utilizadores ──
     match /users/{userId} {
       allow read: if estaAutenticado();
-      allow create: if estaAutenticado();
+      // O cliente pode criar o próprio perfil, mas NUNCA pode autoatribuir role=admin.
+      allow create: if eDono(userId) && request.resource.data.get('role', '') != 'admin';
       allow update: if eDono(userId) || eAdmin();
       allow delete: if eAdmin();
 
@@ -42,7 +42,7 @@ service cloud.firestore {
 
     match /usuarios/{userId} {
       allow read: if estaAutenticado();
-      allow create: if estaAutenticado();
+      allow create: if eDono(userId) && request.resource.data.get('role', '') != 'admin';
       allow update: if eDono(userId) || eAdmin();
       allow delete: if eAdmin();
     }
@@ -121,7 +121,7 @@ service cloud.firestore {
       }
     }
 
-    // ── Pagamentos — apenas o próprio ou admin ──
+    // ── Pagamentos ──
     match /payments/{payId} {
       allow read: if estaAutenticado() &&
         (request.auth.uid == resource.data.utilizadorId ||
@@ -131,7 +131,7 @@ service cloud.firestore {
       allow update, delete: if eAdmin();
     }
 
-    // ── Denúncias — apenas o autor ou admin ──
+    // ── Denúncias ──
     match /reports/{repId} {
       allow read: if estaAutenticado() &&
         (request.auth.uid == resource.data.denunciadoPor || eAdmin());
@@ -153,7 +153,7 @@ service cloud.firestore {
       allow update, delete: if eAdmin();
     }
 
-    // ── Configurações (restantes) ──
+    // ── Configurações ──
     match /configuracoes/{docId} {
       allow read: if estaAutenticado();
       allow write: if eAdmin();
@@ -169,7 +169,6 @@ service cloud.firestore {
     }
 
     // ── Auditoria administrativa ──
-    // O painel não escreve diretamente; somente Cloud Functions (Admin SDK).
     match /admin_audit_logs/{logId} {
       allow read: if eAdmin();
       allow create, update, delete: if false;
@@ -189,7 +188,7 @@ service cloud.firestore {
       allow write: if eDono(userId) || eAdmin();
     }
 
-    // ── Redefinições de senha (trigger de desbloqueio) ──
+    // ── Redefinições de senha ──
     match /redefinicoesSenha/{uid} {
       allow read: if false;
       allow write: if eDono(uid);
