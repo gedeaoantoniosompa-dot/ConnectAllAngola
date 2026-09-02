@@ -18,7 +18,9 @@ import {
   ActivityIndicator,
   Alert,
   Linking,
+  Modal,
   ScrollView,
+  Share,
   StyleSheet,
   Switch,
   Text,
@@ -166,6 +168,68 @@ function SeloConnectAll({ size = 16 }) {
   );
 }
 
+// ── Análise real de compatibilidade perfil ↔ vaga ──
+// Em vez de um texto fixo, comparamos o conteúdo do perfil do candidato
+// (competências, cargo atual, bio) com o texto da vaga (requisitos,
+// descrição, responsabilidades, nível de experiência) e calculamos uma
+// percentagem real de correspondência com base em palavras-chave partilhadas.
+//
+// NOTA: ajusta os nomes dos campos de perfil abaixo (`perfil?.competencias`,
+// `perfil?.cargo`, `perfil?.bio`) caso o teu esquema de perfil use outros
+// nomes — o cálculo depende de existirem esses dados no documento do utilizador.
+const PALAVRAS_IGNORADAS = new Set([
+  'de', 'da', 'do', 'das', 'dos', 'e', 'a', 'o', 'as', 'os', 'em', 'para',
+  'com', 'um', 'uma', 'ou', 'no', 'na', 'nos', 'nas', 'que', 'se', 'ao',
+  'aos', 'as', 'por', 'como', 'ser', 'ter', 'sua', 'seu', 'suas', 'seus',
+  'esta', 'este', 'nesta', 'neste', 'sobre', 'entre', 'até', 'anos', 'ano',
+]);
+
+function normalizarTexto(txt) {
+  return (txt || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, ''); // remove acentos
+}
+
+function extrairPalavrasChave(texto) {
+  if (!texto) return [];
+  return normalizarTexto(texto)
+    .split(/[^a-z0-9]+/)
+    .filter(p => p.length > 2 && !PALAVRAS_IGNORADAS.has(p));
+}
+
+function calcularCompatibilidade(perfil, vaga) {
+  if (!vaga) return null;
+
+  const textoVaga = [vaga.requisitos, vaga.descricao, vaga.responsabilidades, vaga.nivelExperiencia]
+    .filter(Boolean)
+    .join(' ');
+  const palavrasVaga = new Set(extrairPalavrasChave(textoVaga));
+  if (palavrasVaga.size === 0) return null; // vaga sem texto suficiente para analisar
+
+  const competenciasPerfil = Array.isArray(perfil?.competencias) ? perfil.competencias : [];
+  const textoPerfil = [...competenciasPerfil, perfil?.cargo, perfil?.bio]
+    .filter(Boolean)
+    .join(' ');
+  const palavrasPerfil = new Set(extrairPalavrasChave(textoPerfil));
+
+  if (palavrasPerfil.size === 0) {
+    // Perfil sem dados suficientes (sem competências/cargo/bio preenchidos)
+    return { percentagem: null, competenciasDestacadas: [] };
+  }
+
+  const coincidencias = [...palavrasVaga].filter(p => palavrasPerfil.has(p));
+  const percentagem = Math.round((coincidencias.length / palavrasVaga.size) * 100);
+
+  // Devolve as competências originais (com maiúsculas/acentos) que geraram coincidência,
+  // para mostrar algo concreto ao utilizador em vez de só a percentagem.
+  const competenciasDestacadas = competenciasPerfil.filter(c =>
+    extrairPalavrasChave(c).some(p => palavrasVaga.has(p))
+  );
+
+  return { percentagem, competenciasDestacadas };
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // COMPONENTE PRINCIPAL
 // ═══════════════════════════════════════════════════════════════════════════
@@ -187,6 +251,7 @@ export default function VagasScreen() {
   // ── Gestão da vaga (dono) ──
   const [atualizandoStatus, setAtualizandoStatus] = useState(false);
   const [apagando, setApagando] = useState(false);
+  const [menuVisivel, setMenuVisivel] = useState(false); // menu do "⋮" nos detalhes da vaga
 
   // Escuta em tempo real todas as publicações do tipo "Oportunidade"
   useEffect(() => {
@@ -216,16 +281,17 @@ export default function VagasScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vagas]);
 
-  // Se o utilizador é o dono da vaga em detalhes, escuta o nº de candidaturas
+  // Contador de candidaturas em tempo real — visível para qualquer pessoa
+  // que abra os detalhes da vaga (dono ou não), não só para o dono.
   useEffect(() => {
-    if (tela !== 'detalhes' || !vagaAtual || !user || vagaAtual.autorUid !== user.uid) {
+    if (tela !== 'detalhes' || !vagaAtual) {
       setNumCandidaturas(0);
       return;
     }
     const q = query(collection(db, 'candidaturas'), where('vagaId', '==', vagaAtual.id));
     const unsub = onSnapshot(q, snap => setNumCandidaturas(snap.size), () => {});
     return unsub;
-  }, [tela, vagaAtual, user]);
+  }, [tela, vagaAtual]);
 
   // ── Dados da candidatura em progresso ──
   const [email, setEmail] = useState(perfil?.emailContacto || perfil?.email || '');
@@ -247,6 +313,12 @@ export default function VagasScreen() {
   const ehAnonimo = !user || user.isAnonymous;
   const ehDonoDaVaga = !!(user && vagaAtual && vagaAtual.autorUid === user.uid);
   const vagaFechada = vagaAtual?.statusVaga !== 'aberta';
+
+  // Análise real de compatibilidade — só faz sentido (e só é mostrada) para
+  // quem se pode candidatar, nunca para recrutador/empresa.
+  const compatibilidade = !ehRecrutadorOuEmpresa && tela === 'detalhes'
+    ? calcularCompatibilidade(perfil, vagaAtual)
+    : null;
 
   const vagasFiltradas = vagas.filter(v => {
     const pesquisaOk = !pesquisa.trim()
@@ -305,10 +377,22 @@ export default function VagasScreen() {
   };
 
   // ── Submeter candidatura (gerida pela ConnectAll) ──
+  // As respostas de triagem são guardadas com o TEXTO da pergunta incluído
+  // (não só o id), para a candidatura ficar "congelada" tal como foi
+  // respondida — mesmo que o recrutador edite ou apague a vaga depois, ou
+  // que as perguntas mudem. É isto que o ecrã "Candidatos" precisa para
+  // mostrar as perguntas corretamente.
   const submeterCandidatura = async () => {
     if (!vagaAtual || !user) return;
     setEnviando(true);
     try {
+      const perguntasRespondidas = perguntasAtivas.map(p => ({
+        id: p.id,
+        pergunta: p.label,
+        tipo: p.tipo || 'texto',
+        resposta: perguntas[p.id] ?? '',
+      }));
+
       await addDoc(collection(db, 'candidaturas'), {
         vagaId: vagaAtual.id,
         vagaTitulo: vagaAtual.titulo,
@@ -320,7 +404,8 @@ export default function VagasScreen() {
         cvUrl: perfil?.uriCV || perfil?.cvUrl || null,
         email: email.trim(),
         telefone: `${codigoPais} ${telefone}`.trim(),
-        perguntas,
+        perguntasRespondidas, // ← novo formato, com o texto da pergunta
+        perguntas,            // mantido para compatibilidade com código antigo
         seguirEmpresa,
         status: 'pendente',
         timestamp: serverTimestamp(),
@@ -347,6 +432,49 @@ export default function VagasScreen() {
     } finally {
       setAtualizandoStatus(false);
     }
+  };
+
+  // ── Partilhar vaga (disponível para todos) ──
+  const partilharVaga = async () => {
+    if (!vagaAtual) return;
+    try {
+      await Share.share({
+        message: `Vê esta vaga na ConnectAll Angola: ${vagaAtual.titulo} — ${vagaAtual.empresa}`,
+      });
+    } catch (e) {
+      // Utilizador cancelou a partilha — não é um erro a mostrar.
+    }
+  };
+
+  // ── Denunciar vaga (disponível para quem não é o dono) ──
+  const denunciarVaga = () => {
+    if (!vagaAtual || !user) return;
+    Alert.alert(
+      'Denunciar vaga',
+      'Queres reportar esta vaga como inadequada, enganosa ou suspeita à equipa da ConnectAll Angola?',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Denunciar',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await addDoc(collection(db, 'denuncias'), {
+                tipo: 'vaga',
+                vagaId: vagaAtual.id,
+                vagaTitulo: vagaAtual.titulo,
+                vagaAutorUid: vagaAtual.autorUid || null,
+                denuncianteUid: user.uid,
+                timestamp: serverTimestamp(),
+              });
+              Alert.alert('Obrigado', 'A tua denúncia foi enviada à equipa da ConnectAll Angola.');
+            } catch (e) {
+              Alert.alert('Erro', 'Não foi possível enviar a denúncia. Tenta novamente.');
+            }
+          },
+        },
+      ]
+    );
   };
 
   // ── Apagar vaga (só o dono) ──
@@ -533,7 +661,7 @@ export default function VagasScreen() {
             <Ionicons name="arrow-back" size={22} color={C.cinza4} />
           </TouchableOpacity>
           <View style={s.dragHandle} />
-          <TouchableOpacity style={s.modalCloseBtn} onPress={() => verificarAcesso(() => {})}>
+          <TouchableOpacity style={s.modalCloseBtn} onPress={() => setMenuVisivel(true)}>
             <Feather name="more-vertical" size={20} color={C.cinza4} />
           </TouchableOpacity>
         </View>
@@ -547,7 +675,7 @@ export default function VagasScreen() {
 
             <Text style={s.detalhesTitulo}>{vagaAtual.titulo}</Text>
             <Text style={s.detalhesInfo}>
-              {vagaAtual.local} · {vagaAtual.visto} · <Text style={{ color: C.verde, fontWeight: '700' }}>{vagaAtual.candidaturas} candidaturas</Text>
+              {vagaAtual.local} · {vagaAtual.visto} · <Text style={{ color: C.verde, fontWeight: '700' }}>{numCandidaturas} candidaturas</Text>
             </Text>
 
             <View style={s.tipoRow}>
@@ -595,89 +723,79 @@ export default function VagasScreen() {
               </View>
             )}
 
-            <View style={s.detalhesBtnRow}>
-              <TouchableOpacity
-                style={[
-                  s.btnCandidatarPrimario,
-                  jaCandidatado && s.btnCandidatadoCheio,
-                  candidaturaBloqueada && s.btnCandidatarDesativado,
-                ]}
-                disabled={candidaturaBloqueada}
-                onPress={() => {
-                  if (jaCandidatado || candidaturaBloqueada) return;
-                  verificarAcesso(() => {
-                    if (vagaAtual.simplificada) {
-                      candidatarSimplificada();
-                    } else {
-                      setTela('contacto');
-                    }
-                  });
-                }}
-              >
-                {vagaAtual.simplificada && !jaCandidatado && !vagaFechada && (
-                  <SeloConnectAll size={18} />
-                )}
-                <Text style={s.btnCandidatarPrimarioTxt}>
-                  {jaCandidatado
-                    ? 'Candidatura enviada'
-                    : vagaFechada
-                      ? 'Vaga encerrada'
-                      : (vagaAtual.simplificada ? 'Candidatura simplificada' : 'Candidatar-se')}
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity style={s.btnSalvar} onPress={() => verificarAcesso(() => {})}>
-                <Text style={s.btnSalvarTxt}>Guardar</Text>
-              </TouchableOpacity>
-            </View>
-
-            {ehDonoDaVaga && (
-              <>
-                <TouchableOpacity style={s.btnVerCandidatos} onPress={irParaCandidatos}>
-                  <Ionicons name="people" size={16} color={C.azul} />
-                  <Text style={s.btnVerCandidatosTxt}>Ver candidatos ({numCandidaturas})</Text>
+            {!ehRecrutadorOuEmpresa && (
+              <View style={s.detalhesBtnRow}>
+                <TouchableOpacity
+                  style={[
+                    s.btnCandidatarPrimario,
+                    jaCandidatado && s.btnCandidatadoCheio,
+                    candidaturaBloqueada && s.btnCandidatarDesativado,
+                  ]}
+                  disabled={candidaturaBloqueada}
+                  onPress={() => {
+                    if (jaCandidatado || candidaturaBloqueada) return;
+                    verificarAcesso(() => {
+                      if (vagaAtual.simplificada) {
+                        candidatarSimplificada();
+                      } else {
+                        setTela('contacto');
+                      }
+                    });
+                  }}
+                >
+                  {vagaAtual.simplificada && !jaCandidatado && !vagaFechada && (
+                    <SeloConnectAll size={18} />
+                  )}
+                  <Text style={s.btnCandidatarPrimarioTxt}>
+                    {jaCandidatado
+                      ? 'Candidatura enviada'
+                      : vagaFechada
+                        ? 'Vaga encerrada'
+                        : (vagaAtual.simplificada ? 'Candidatura simplificada' : 'Candidatar-se')}
+                  </Text>
                 </TouchableOpacity>
 
-                <View style={s.gestaoVagaBox}>
-                  <View style={s.gestaoStatusRow}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={s.gestaoStatusTitulo}>Vaga ativa</Text>
-                      <Text style={s.gestaoStatusSub}>
-                        {vagaAtual.statusVaga === 'aberta'
-                          ? 'Visível na lista e a receber candidaturas'
-                          : 'Fechada — não aparece para candidatos'}
-                      </Text>
-                    </View>
-                    {atualizandoStatus
-                      ? <ActivityIndicator color={C.azul} size="small" />
-                      : (
-                        <Switch
-                          value={vagaAtual.statusVaga === 'aberta'}
-                          onValueChange={alternarStatusVaga}
-                          trackColor={{ false: C.cinza2, true: C.verde }}
-                          thumbColor={C.branco}
-                        />
-                      )}
-                  </View>
-
-                  <TouchableOpacity style={s.btnApagarVaga} onPress={apagarVaga} disabled={apagando}>
-                    {apagando
-                      ? <ActivityIndicator color={C.vermelho} size="small" />
-                      : (
-                        <>
-                          <Ionicons name="trash-outline" size={16} color={C.vermelho} />
-                          <Text style={s.btnApagarVagaTxt}>Apagar vaga</Text>
-                        </>
-                      )}
-                  </TouchableOpacity>
-                </View>
-              </>
+                <TouchableOpacity style={s.btnSalvar} onPress={() => verificarAcesso(() => {})}>
+                  <Text style={s.btnSalvarTxt}>Guardar</Text>
+                </TouchableOpacity>
+              </View>
             )}
 
-            <View style={s.infoBox}>
-              <Text style={s.infoBoxTitulo}>O seu perfil combina com esta vaga</Text>
-              <Text style={s.infoBoxTxt}>Possui as competências ideais para esta função de acordo com o seu currículo.</Text>
-            </View>
+            {ehDonoDaVaga && (
+              <TouchableOpacity style={s.btnVerCandidatos} onPress={irParaCandidatos}>
+                <Ionicons name="people" size={16} color={C.azul} />
+                <Text style={s.btnVerCandidatosTxt}>Ver candidatos ({numCandidaturas})</Text>
+              </TouchableOpacity>
+            )}
+
+            {!ehRecrutadorOuEmpresa && compatibilidade && (
+              <View style={s.infoBox}>
+                {compatibilidade.percentagem !== null ? (
+                  <>
+                    <Text style={s.infoBoxTitulo}>
+                      {compatibilidade.percentagem >= 60
+                        ? 'O seu perfil combina com esta vaga'
+                        : compatibilidade.percentagem >= 30
+                          ? 'O seu perfil combina parcialmente com esta vaga'
+                          : 'O seu perfil ainda combina pouco com esta vaga'}
+                    </Text>
+                    <Text style={s.infoBoxTxt}>
+                      {compatibilidade.percentagem}% dos requisitos desta vaga correspondem ao que está no seu perfil
+                      {compatibilidade.competenciasDestacadas.length > 0
+                        ? `, nomeadamente ${compatibilidade.competenciasDestacadas.slice(0, 3).join(', ')}.`
+                        : '.'}
+                    </Text>
+                  </>
+                ) : (
+                  <>
+                    <Text style={s.infoBoxTitulo}>Complete o seu perfil para uma análise precisa</Text>
+                    <Text style={s.infoBoxTxt}>
+                      Adiciona competências, cargo ou uma bio ao teu perfil para vermos como se compara aos requisitos desta vaga.
+                    </Text>
+                  </>
+                )}
+              </View>
+            )}
 
             <View style={s.descBox}>
               <Text style={s.sectionTitulo}>Sobre a vaga</Text>
@@ -706,6 +824,71 @@ export default function VagasScreen() {
             )}
           </View>
         </ScrollView>
+
+        {/* Menu do "⋮" — opções diferentes consoante seja o dono da vaga ou não */}
+        <Modal visible={menuVisivel} transparent animationType="fade" onRequestClose={() => setMenuVisivel(false)}>
+          <TouchableOpacity style={s.menuOverlay} activeOpacity={1} onPress={() => setMenuVisivel(false)}>
+            <TouchableOpacity activeOpacity={1} style={s.menuCard} onPress={() => {}}>
+              {ehDonoDaVaga ? (
+                <>
+                  <View style={s.menuStatusRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={s.menuItemTxt}>Vaga aberta</Text>
+                      <Text style={s.menuItemSub}>
+                        {vagaAtual.statusVaga === 'aberta'
+                          ? 'A receber candidaturas'
+                          : 'Fechada — não aparece para candidatos'}
+                      </Text>
+                    </View>
+                    {atualizandoStatus
+                      ? <ActivityIndicator color={C.azul} size="small" />
+                      : (
+                        <Switch
+                          value={vagaAtual.statusVaga === 'aberta'}
+                          onValueChange={alternarStatusVaga}
+                          trackColor={{ false: C.cinza2, true: C.verde }}
+                          thumbColor={C.branco}
+                        />
+                      )}
+                  </View>
+
+                  <View style={s.menuDivider} />
+
+                  <TouchableOpacity style={s.menuItem} onPress={() => { setMenuVisivel(false); partilharVaga(); }}>
+                    <Ionicons name="share-social-outline" size={18} color={C.cinza4} />
+                    <Text style={s.menuItemTxt}>Partilhar vaga</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={s.menuItem}
+                    disabled={apagando}
+                    onPress={() => { setMenuVisivel(false); apagarVaga(); }}
+                  >
+                    {apagando
+                      ? <ActivityIndicator color={C.vermelho} size="small" />
+                      : <Ionicons name="trash-outline" size={18} color={C.vermelho} />}
+                    <Text style={[s.menuItemTxt, { color: C.vermelho }]}>Apagar vaga</Text>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <>
+                  <TouchableOpacity style={s.menuItem} onPress={() => { setMenuVisivel(false); partilharVaga(); }}>
+                    <Ionicons name="share-social-outline" size={18} color={C.cinza4} />
+                    <Text style={s.menuItemTxt}>Partilhar vaga</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={s.menuItem}
+                    onPress={() => { setMenuVisivel(false); verificarAcesso(denunciarVaga); }}
+                  >
+                    <Ionicons name="flag-outline" size={18} color={C.vermelho} />
+                    <Text style={[s.menuItemTxt, { color: C.vermelho }]}>Denunciar vaga</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </Modal>
       </SafeAreaView>
     );
   }
@@ -1171,6 +1354,15 @@ const s = StyleSheet.create({
   gestaoStatusSub: { fontSize: 12, color: C.cinza3, marginTop: 2 },
   btnApagarVaga: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, borderWidth: 1.3, borderColor: C.vermelho, borderRadius: 20, paddingVertical: 10 },
   btnApagarVagaTxt: { color: C.vermelho, fontWeight: '700', fontSize: 13 },
+
+  // ── Menu do "⋮" nos detalhes da vaga ──
+  menuOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'flex-start', alignItems: 'flex-end', paddingTop: 56, paddingRight: 14 },
+  menuCard: { backgroundColor: C.branco, borderRadius: 12, paddingVertical: 6, width: 240, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 12, elevation: 8 },
+  menuStatusRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 12 },
+  menuDivider: { height: 1, backgroundColor: C.cinza1, marginVertical: 2 },
+  menuItem: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 13 },
+  menuItemTxt: { fontSize: 14, fontWeight: '600', color: C.preto },
+  menuItemSub: { fontSize: 11, color: C.cinza3, marginTop: 2 },
   infoBox: { backgroundColor: C.cinza1, borderRadius: 10, padding: 14, marginTop: 22 },
   infoBoxTitulo: { fontSize: 14, fontWeight: '700', color: C.preto, marginBottom: 4 },
   infoBoxTxt: { fontSize: 13, color: C.cinza3, lineHeight: 19 },

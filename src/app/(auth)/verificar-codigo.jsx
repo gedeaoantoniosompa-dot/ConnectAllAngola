@@ -13,6 +13,14 @@
  * 3. Campo otpVerificado:true gravado no Firestore — o _layout usa este campo
  *    para não redirecionar utilizadores que usaram o OTP personalizado (cujo
  *    emailVerified do Firebase fica sempre false).
+ * 4. ── CORREÇÃO (foto de perfil perdida no registo por e-mail) ──
+ *    O profile.jsx (Passo 1) guarda a foto escolhida como um caminho LOCAL
+ *    (fotoLocalUri) dentro de pendente.dadosPerfil, porque nessa altura
+ *    ainda não existe uid para fazer upload. Agora que o uid já existe
+ *    (passo 4 abaixo), a foto é carregada para o Firebase Storage e o
+ *    fotoURL resultante é gravado no perfil — tal como já acontecia com o
+ *    Bilhete de Identidade e o CV. fotoLocalUri nunca é gravado no
+ *    Firestore (é só um caminho do dispositivo).
  */
 
 import { Ionicons } from '@expo/vector-icons';
@@ -35,6 +43,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { app, db, auth as firebaseAuth } from '../../config/firebase';
+import { uploadFotoPerfil } from '../../config/utils/uploadFoto';
 
 // Campos de URI local que nunca devem ir para o Firestore
 // (são caminhos do dispositivo, não URLs do Firebase Storage)
@@ -119,20 +128,38 @@ export default function VerificarCodigoScreen() {
       );
       const uid = cred.user.uid;
 
-      // 5. Preparar dados do perfil para o Firestore:
+      // 5. Carregar a foto de perfil pendente (se foi escolhida no Passo 1
+      //    de profile.jsx). Só agora existe uid para o upload acontecer.
+      //    Um erro aqui não deve impedir a criação da conta — o
+      //    utilizador pode sempre adicionar/trocar a foto depois em
+      //    "Editar perfil".
+      let fotoURL = null;
+      const fotoLocalUri = pendente.dadosPerfil?.fotoLocalUri;
+      if (fotoLocalUri) {
+        try {
+          fotoURL = await uploadFotoPerfil(uid, fotoLocalUri);
+        } catch (fotoErr) {
+          console.log('[VerificarCodigo] erro ao carregar foto de perfil:', fotoErr?.message);
+        }
+      }
+
+      // 6. Preparar dados do perfil para o Firestore:
       //    Remover URIs locais (caminhos do dispositivo como file:///...) porque
       //    não são URLs válidas — o upload ao Firebase Storage ainda não foi feito.
       //    Estes ficheiros serão geridos separadamente após o login.
+      //    fotoLocalUri nunca é gravado — já foi consumido no passo 5 acima.
       const dadosPerfil = { ...(pendente.dadosPerfil || {}) };
+      delete dadosPerfil.fotoLocalUri;
       CAMPOS_URI_LOCAL.forEach(campo => {
         if (dadosPerfil[campo] && !String(dadosPerfil[campo]).startsWith('http')) {
           delete dadosPerfil[campo];
         }
       });
 
-      // 6. Gravar o perfil completo no Firestore
+      // 7. Gravar o perfil completo no Firestore
       await setDoc(doc(db, 'users', uid), {
         ...dadosPerfil,
+        fotoURL,
         email: pendente.email,
         uid,
         tipoPerfil: pendente.tipoPerfil || 'utilizador',
@@ -147,7 +174,7 @@ export default function VerificarCodigoScreen() {
         dataAtualizacao: serverTimestamp(),
       }, { merge: true }); // merge:true evita apagar campos escritos em paralelo (ex: fcmToken do useFcmToken)
 
-      // 7. Limpar dados temporários e navegar para o feed
+      // 8. Limpar dados temporários e navegar para o feed
       await AsyncStorage.multiRemove([
         '_registoPendente',
         '_registoConcluindo',

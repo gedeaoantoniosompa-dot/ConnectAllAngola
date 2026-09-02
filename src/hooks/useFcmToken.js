@@ -1,9 +1,16 @@
 /**
  * hooks/useFcmToken.js — ConnectAll Angola
  *
- * Nota: o campo chama-se "fcmToken" por histórico, mas o valor gravado é
- * um Expo Push Token (getExpoPushTokenAsync) — é isso que a Cloud
- * Function usa para enviar o push via API do Expo.
+ * Nota: o campo chama-se "fcmToken" por histórico. No mobile, o valor
+ * gravado é um Expo Push Token (getExpoPushTokenAsync) — é isso que a
+ * Cloud Function usa para enviar o push via API do Expo.
+ *
+ * Na web, o Expo push service não é usado (getExpoPushTokenAsync exige
+ * applicationId, que não existe no browser). Em vez disso, usamos
+ * getDevicePushTokenAsync(), que devolve a subscription/token nativo do
+ * navegador (via VAPID + service worker configurados no app.json). Esse
+ * token deve ser tratado no backend com a lib `web-push`, não com a API
+ * de push da Expo.
  *
  * O setNotificationHandler foi movido para o _layout.tsx (fica só um,
  * lá, com a lógica de só tocar som em chamadas) — tê-lo aqui também
@@ -60,14 +67,32 @@ export function useFcmToken() {
         });
       }
 
-      // projectId explícito — sem isto, getExpoPushTokenAsync() pode falhar
-      // ou devolver token errado em builds standalone/EAS (fora do Expo Go).
-      const projectId =
-        Constants.expoConfig?.extra?.eas?.projectId ||
-        Constants.easConfig?.projectId;
+      let token = null;
 
-      const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
-      const token = tokenData.data;
+      try {
+        if (Platform.OS === 'web') {
+          // Web: token nativo do navegador (VAPID + service worker), não passa
+          // pelo serviço de push da Expo (que exige applicationId inexistente na web).
+          const tokenData = await Notifications.getDevicePushTokenAsync();
+          token = tokenData?.data ?? null;
+        } else {
+          // Mobile (Android/iOS): fluxo normal via serviço de push da Expo.
+          // projectId explícito — sem isto, getExpoPushTokenAsync() pode falhar
+          // ou devolver token errado em builds standalone/EAS (fora do Expo Go).
+          const projectId =
+            Constants.expoConfig?.extra?.eas?.projectId ||
+            Constants.easConfig?.projectId;
+
+          const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
+          token = tokenData?.data ?? null;
+        }
+      } catch (err) {
+        // Na web isto pode falhar em dev (http/IP local, rede a bloquear o
+        // serviço de push, etc.) — não deve derrubar o resto da app.
+        console.log('[FCM] Erro ao obter token de push:', err?.message || err);
+        return;
+      }
+
       if (!token) return;
 
       // ✅ setDoc com merge em vez de updateDoc — funciona mesmo sem documento existente

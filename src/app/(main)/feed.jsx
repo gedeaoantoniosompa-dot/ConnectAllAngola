@@ -22,9 +22,11 @@ import PostMedia from '../../components/PostMedia';
 import { db } from '../../config/firebase';
 import { useUpload } from '../../context/UploadContext';
 import { useUser } from '../../context/UserContext';
+import { useContasVerificadas } from '../../hooks/useContasVerificadas';
 import { useNotifications } from '../../hooks/useNotifications';
 import { useUnreadMessages } from '../../hooks/useUnreadMessages';
 import { enviarNotificacao } from '../../services/notificationService';
+import { ouvirLivesAtivas } from '../../services/livesService';
 
 const { width: W, height: H } = Dimensions.get('window');
 const PAGE_SIZE = 7;
@@ -412,12 +414,29 @@ function PostMediaCard({ post, acoes, onAbrirComentarios }) {
 }
 
 // ── PostCard ──────────────────────────────────────────────────────────────────
+// NOTA: o badge de verificado já não é decidido pelo campo "autorVerificado"
+// gravado no próprio post (esse campo é apenas uma cópia estática, feita no
+// momento da publicação, e podia ficar desactualizada ou até ser forjada no
+// cliente). Em vez disso, o PostCard recebe a prop "verificado", calculada
+// ao vivo em FeedScreen a partir da colecção "users" (ver useContasVerificadas),
+// que reflecte exactamente o que o painel admin marcou como verificado.
+//
+// NOVO — "aoVivoAgora": quando este post veio de "Partilhar no Feed" a
+// partir de uma live (tem post.liveId) E essa live ainda consta na lista de
+// lives activas (ver ouvirLivesAtivas em FeedScreen), o post deixa de se
+// comportar como uma publicação normal: mostra um preview "AO VIVO" e o
+// toque abre directamente /watch/[id] com os dados gravados no próprio
+// post (liveChannelName, liveHostUidNumerico, liveCor). Assim que a live
+// termina, aoVivoAgora passa a false automaticamente (o id sai da lista de
+// activas) e o post volta a comportar-se como uma publicação normal.
 const PostCard = React.memo(function PostCard({
-  post, user, indice, onLike, onLongLike, onComentar, onMenu, onPerfil, onVerReacoes,
+  post, user, indice, verificado, aoVivoAgora,
+  onLike, onLongLike, onComentar, onMenu, onPerfil, onVerReacoes, onAbrirLive,
 }) {
   const router = useRouter();
   const jaDeuLike = post.likedBy?.includes(user?.uid);
   const cor = TIPO_CORES[post.tipo] || '#2563EB';
+  const ehLiveAtiva = !!post.liveId && aoVivoAgora;
 
   const acoes = useMemo(() => ({
     liked:         jaDeuLike,
@@ -469,15 +488,20 @@ const PostCard = React.memo(function PostCard({
               ? <Image source={{ uri: post.autorFoto }} style={styles.postAvatarImage} contentFit="cover" />
               : <Text style={styles.postAvatarText}>{(post.autorNome || 'U')[0]}</Text>}
           </View>
+          {ehLiveAtiva && (
+            <View style={styles.avatarLiveBadge}>
+              <View style={styles.avatarLiveDot} />
+            </View>
+          )}
         </TouchableOpacity>
         <View style={styles.postMeta}>
           <TouchableOpacity onPress={() => onPerfil(post.uid, post.autorTipo)} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
             <Text style={styles.postAutor}>{post.autorNome}</Text>
-            {post.autorVerificado && <BadgeVerificado size={14} />}
+            {!!verificado && <BadgeVerificado size={14} />}
           </TouchableOpacity>
           <Text style={styles.postCargo} numberOfLines={1}>{post.autorCargo}</Text>
           <View style={styles.postMetaRow}>
-            {post.autorCidade && (
+            {!!post.autorCidade && (
               <><Ionicons name="location-sharp" size={10} color="#718096" /><Text style={styles.postMetaText}>{post.autorCidade}</Text><Text style={styles.postMetaDot}>•</Text></>
             )}
             <Text style={styles.postMetaText}>{tempoRelativo(post.timestamp)}</Text>
@@ -487,14 +511,41 @@ const PostCard = React.memo(function PostCard({
           <Ionicons name="ellipsis-horizontal-sharp" size={16} color="#718096" />
         </TouchableOpacity>
       </View>
-      {!!post.texto && <Text style={styles.postTexto}>{post.texto}</Text>}
+
+      {/* ── Preview de live em curso ──
+          Substitui o texto normal enquanto a live estiver activa. Ao
+          terminar, esta secção desaparece e o texto volta a aparecer como
+          publicação normal (ver bloco {!!post.texto && ...} mais abaixo). */}
+      {ehLiveAtiva && (
+        <TouchableOpacity
+          style={styles.liveFeedCard}
+          activeOpacity={0.9}
+          onPress={() => onAbrirLive(post)}
+        >
+          <View style={styles.liveFeedTopo}>
+            <View style={styles.liveFeedBadge}>
+              <View style={styles.liveFeedDot} />
+              <Text style={styles.liveFeedBadgeText}>AO VIVO</Text>
+            </View>
+          </View>
+          {!!post.texto && (
+            <Text style={styles.liveFeedTitulo} numberOfLines={2}>{post.texto}</Text>
+          )}
+          <View style={styles.liveFeedBtn}>
+            <Ionicons name="play-circle" size={17} color="#fff" />
+            <Text style={styles.liveFeedBtnTxt}>Assistir agora</Text>
+          </View>
+        </TouchableOpacity>
+      )}
+
+      {!ehLiveAtiva && !!post.texto && <Text style={styles.postTexto}>{post.texto}</Text>}
       {!!post.repostadoDe && !!post.repostTextoOriginal && post.texto !== post.repostTextoOriginal && (
         <View style={styles.repostConteudo}>
           <Text style={styles.repostConteudoLabel}>Publicação original</Text>
           <Text style={styles.repostConteudoTexto}>{post.repostTextoOriginal}</Text>
         </View>
       )}
-      <PostMediaCard post={postComUid} acoes={acoes} onAbrirComentarios={() => onComentar(post)} />
+      {!ehLiveAtiva && <PostMediaCard post={postComUid} acoes={acoes} onAbrirComentarios={() => onComentar(post)} />}
       <View style={styles.postStatsRow}>
         <TouchableOpacity style={styles.postStatsLeft} onPress={() => onVerReacoes(post.id)}>
           <View style={styles.emojiOverlapContainer}>
@@ -537,6 +588,8 @@ const PostCard = React.memo(function PostCard({
   prev.post.reacoesMap  === next.post.reacoesMap  &&
   prev.post.mediaUrls   === next.post.mediaUrls   &&
   prev.post.repostadoDe  === next.post.repostadoDe  &&
+  prev.verificado        === next.verificado        &&
+  prev.aoVivoAgora       === next.aoVivoAgora       &&
   prev.indice           === next.indice           &&
   prev.user?.uid        === next.user?.uid
 );
@@ -583,6 +636,8 @@ export default function FeedScreen() {
   const { user, perfil, carregando: authCarregando } = useUser();
   const { unreadCount } = useNotifications();
   const { unreadMessagesCount } = useUnreadMessages(user?.uid);
+  // Conjunto de UIDs verificados pelo painel admin, actualizado em tempo real.
+  const verificados = useContasVerificadas();
 
   const [posts,          setPosts]          = useState([]);
   const [stories,        setStories]        = useState([]);
@@ -593,6 +648,13 @@ export default function FeedScreen() {
   const ultimoDocRef = useRef(null);
 
   const [oportunidades, setOportunidades] = useState([]);
+
+  // NOVO: ids de lives actualmente ao vivo (com heartbeat recente — ver
+  // livesService.js). Usado só para decidir se um post partilhado a partir
+  // de uma live (post.liveId) ainda deve mostrar o preview "AO VIVO" e
+  // apontar para /watch/[id], ou se já deve comportar-se como uma
+  // publicação normal (live terminada).
+  const [idsLivesAtivas, setIdsLivesAtivas] = useState(() => new Set());
 
   const [menuPost,            setMenuPost]            = useState(null);
   const [reacaoPickerPost,    setReacaoPickerPost]    = useState(null);
@@ -722,6 +784,17 @@ export default function FeedScreen() {
     return unsub;
   }, [user]);
 
+  // NOVO: mantém a lista de ids de lives ao vivo agora — é o que decide se
+  // um post partilhado a partir de uma live ainda mostra o preview "AO
+  // VIVO" ou se já volta a ser uma publicação normal.
+  useEffect(() => {
+    if (!user) return;
+    const unsub = ouvirLivesAtivas((lista) => {
+      setIdsLivesAtivas(new Set(lista.map((l) => l.id)));
+    });
+    return unsub;
+  }, [user]);
+
   const handleReacao = useCallback(async (post, emoji) => {
     if (bloqueioAnonimo()) return;
     if (!user) return;
@@ -797,6 +870,24 @@ export default function FeedScreen() {
     router.push({ pathname: '/(main)/perfil-publico', params: { uid } });
   }, [bloqueioAnonimo, router]);
   const verReacoes   = useCallback((postId) => { router.push({ pathname: '/(main)/ReacoesModal', params: { postId } }); }, [router]);
+
+  // NOVO: abre a live a partir do preview no Feed, com os mesmos parâmetros
+  // usados em live.jsx (assistir), lidos directamente do post partilhado.
+  const abrirLiveDoPost = useCallback((post) => {
+    if (bloqueioAnonimo()) return;
+    if (!post?.liveId) return;
+    router.push({
+      pathname: '/watch/[id]',
+      params: {
+        id: post.liveId,
+        channelName: post.liveChannelName,
+        titulo: post.texto || 'Ao vivo',
+        hostNome: post.autorNome,
+        hostUidNumerico: post.liveHostUidNumerico != null ? String(post.liveHostUidNumerico) : undefined,
+        cor: post.liveCor || '#0A66C2',
+      },
+    });
+  }, [bloqueioAnonimo, router]);
 
   // ✅ FIX: só é anónimo se isAnonymous vier explicitamente "true".
   // Antes: `user?.isAnonymous ?? true` fazia com que QUALQUER conta normal
@@ -922,8 +1013,15 @@ export default function FeedScreen() {
   ), [stories, oportunidades, carregando, authCarregando, posts.length, fotoURL, isAnonymous]);
 
   const renderItem = useCallback(({ item: post, index }) => (
-    <PostCard post={post} user={user} indice={index} onLike={handleLike} onLongLike={abrirReacaoPicker} onComentar={abrirComentarios} onMenu={abrirMenu} onPerfil={irParaPerfil} onVerReacoes={verReacoes} />
-  ), [user, handleLike, abrirReacaoPicker, abrirComentarios, abrirMenu, irParaPerfil, verReacoes]);
+    <PostCard
+      post={post} user={user} indice={index}
+      verificado={verificados.has(post.uid)}
+      aoVivoAgora={!!post.liveId && idsLivesAtivas.has(post.liveId)}
+      onLike={handleLike} onLongLike={abrirReacaoPicker} onComentar={abrirComentarios}
+      onMenu={abrirMenu} onPerfil={irParaPerfil} onVerReacoes={verReacoes}
+      onAbrirLive={abrirLiveDoPost}
+    />
+  ), [user, verificados, idsLivesAtivas, handleLike, abrirReacaoPicker, abrirComentarios, abrirMenu, irParaPerfil, verReacoes, abrirLiveDoPost]);
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -1150,6 +1248,13 @@ const styles = StyleSheet.create({
   postAvatar: { width: 40, height: 40, borderRadius: 14, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   postAvatarImage: { width: 40, height: 40, borderRadius: 14 },
   postAvatarText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  // ── Badge "AO VIVO" no avatar, quando o post é uma live em curso ──
+  avatarLiveBadge: {
+    position: 'absolute', bottom: -3, right: -3,
+    width: 16, height: 16, borderRadius: 8,
+    backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center',
+  },
+  avatarLiveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#E00000' },
   postMeta: { flex: 1, gap: 1 },
   postAutor: { fontSize: 14, fontWeight: '700', color: '#1A202C' },
   postCargo: { fontSize: 12, color: '#4A5568', fontWeight: '400' },
@@ -1158,6 +1263,25 @@ const styles = StyleSheet.create({
   postMetaDot: { fontSize: 11, color: '#718096' },
   postMore: { padding: 4, alignSelf: 'flex-start' },
   postTexto: { fontSize: 14, color: '#2D3748', lineHeight: 22, paddingHorizontal: 16, paddingBottom: 12 },
+  // ── Preview de live em curso, dentro do PostCard ──
+  liveFeedCard: {
+    marginHorizontal: 16, marginBottom: 12, padding: 14, borderRadius: 12,
+    backgroundColor: '#004182', gap: 10,
+  },
+  liveFeedTopo: { flexDirection: 'row', alignItems: 'center' },
+  liveFeedBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    backgroundColor: '#E00000', borderRadius: 6,
+    paddingHorizontal: 8, paddingVertical: 3,
+  },
+  liveFeedDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#fff' },
+  liveFeedBadgeText: { fontSize: 10, fontWeight: '800', color: '#fff', letterSpacing: 0.4 },
+  liveFeedTitulo: { fontSize: 14, fontWeight: '700', color: '#fff', lineHeight: 20 },
+  liveFeedBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    backgroundColor: 'rgba(255,255,255,0.16)', borderRadius: 18, paddingVertical: 10,
+  },
+  liveFeedBtnTxt: { color: '#fff', fontSize: 13, fontWeight: '700' },
   postStatsRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 12, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' },
   postStatsLeft: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   postStatText: { fontSize: 12, color: '#718096', fontWeight: '500' },

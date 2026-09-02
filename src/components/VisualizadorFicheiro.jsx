@@ -40,18 +40,29 @@ const CHAVE_PASTA_DOWNLOADS = '_pastaDownloadsEscolhida';
 const CANAL_NOTIFICACOES_DOWNLOAD = 'downloads';
 
 // ── Notificações do sistema ────────────────────────────────────────────────
+// CORRIGIDO: expo-notifications não suporta notificações agendadas/locais
+// na web (scheduleNotificationAsync, dismissNotificationAsync,
+// getPermissionsAsync/requestPermissionsAsync e o listener de resposta
+// rebentam ou não fazem sentido no browser). Esta flag protege todas essas
+// chamadas — na web, o download continua a funcionar normalmente, só sem
+// a notificação "A transferir.../Download concluído".
+const NOTIFICACOES_SUPORTADAS = Platform.OS !== 'web';
+
 // Mostra sempre a notificação mesmo com a app aberta (por omissão o
 // expo-notifications esconde-a nesse caso).
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: false,
-    shouldSetBadge: false,
-  }),
-});
+if (NOTIFICACOES_SUPORTADAS) {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowBanner: true,
+      shouldShowList: true,
+      shouldPlaySound: false,
+      shouldSetBadge: false,
+    }),
+  });
+}
 
 async function garantirPermissaoNotificacoes() {
+  if (!NOTIFICACOES_SUPORTADAS) return;
   const { status } = await Notifications.getPermissionsAsync();
   if (status !== 'granted') {
     await Notifications.requestPermissionsAsync();
@@ -64,6 +75,22 @@ async function garantirCanalAndroid() {
     name: 'Downloads',
     importance: Notifications.AndroidImportance.DEFAULT,
   });
+}
+
+// Wrappers seguros — nunca chamam a API real na web, para nunca lançar
+// "is not available on web" independentemente de onde forem chamados.
+async function agendarNotificacaoSegura(config) {
+  if (!NOTIFICACOES_SUPORTADAS) return;
+  try {
+    await Notifications.scheduleNotificationAsync(config);
+  } catch (e) {
+    // silencioso — a notificação é só um extra, nunca deve rebentar o download
+  }
+}
+
+async function descartarNotificacaoSegura(id) {
+  if (!NOTIFICACOES_SUPORTADAS) return;
+  await Notifications.dismissNotificationAsync(id).catch(() => {});
 }
 
 // Abre o PDF já descarregado. No Android usa o URI content:// devolvido
@@ -95,6 +122,7 @@ async function abrirPdfDescarregado(dados) {
 // ficheiro em duplicado.
 let listenerNotificacaoRegistado = false;
 function registarListenerNotificacaoDownload() {
+  if (!NOTIFICACOES_SUPORTADAS) return;
   if (listenerNotificacaoRegistado) return;
   listenerNotificacaoRegistado = true;
   Notifications.addNotificationResponseReceivedListener((resposta) => {
@@ -162,12 +190,17 @@ async function obterPastaDestinoAndroid() {
 // para a pasta escolhida pelo utilizador (Android) e abre também o menu
 // de partilha; quando termina, a notificação passa a "Download concluído"
 // e fica na barra de notificações — tocar nela abre o PDF. Imagens
-// continuam a abrir no modal interno.
+// continuam a abrir no modal interno. Na web (sem notificações — ver
+// NOTIFICACOES_SUPORTADAS), o download acontece na mesma, só sem esse aviso.
 export function useVisualizador() {
-  const [visivel, setVisivel]     = useState(false);
-  const [uri, setUri]             = useState(null);
-  const [titulo, setTitulo]       = useState('');
-  const [baixando, setBaixando]   = useState(false);
+  const [visivel, setVisivel]         = useState(false);
+  const [uri, setUri]                 = useState(null);
+  const [titulo, setTitulo]           = useState('');
+  const [baixando, setBaixando]       = useState(false);
+  // CORRIGIDO (web): tipo do conteúdo actualmente aberto no modal —
+  // 'imagem' usa <Image>, 'pdf' usa <iframe> (só existe/faz sentido na
+  // web; no telemóvel os PDFs nunca abrem aqui, seguem para baixarPdf).
+  const [tipoConteudo, setTipoConteudo] = useState('imagem');
 
   // Trinco síncrono. O state "baixando" só é reflectido no próximo render,
   // por isso não chega para bloquear cliques repetidos que aconteçam antes
@@ -175,6 +208,13 @@ export function useVisualizador() {
   // nenhum render, e por isso bloqueia mesmo a chamada seguinte que chegue
   // ainda no mesmo ciclo de eventos.
   const aBaixarRef = useRef(false);
+
+  // CORRIGIDO: mesmo princípio do aBaixarRef, mas para abrir() — evita que
+  // um duplo toque (comum sobretudo no browser: mousedown+click a disparar
+  // dois onPress muito próximos) chame abrir() duas vezes antes do primeiro
+  // detetarTipoReal() terminar, o que fazia o modal parecer abrir várias
+  // vezes seguidas.
+  const aAbrirRef = useRef(false);
 
   useEffect(() => {
     registarListenerNotificacaoDownload();
@@ -194,7 +234,7 @@ export function useVisualizador() {
       await garantirCanalAndroid();
 
       // ── Notificação de início ──
-      await Notifications.scheduleNotificationAsync({
+      await agendarNotificacaoSegura({
         identifier: idNotificacao,
         content: {
           title: 'A transferir…',
@@ -223,7 +263,7 @@ export function useVisualizador() {
         //     partilha para o mesmo ficheiro.
         const pastaUri = await obterPastaDestinoAndroid();
         if (!pastaUri) {
-          await Notifications.dismissNotificationAsync(idNotificacao).catch(() => {});
+          await descartarNotificacaoSegura(idNotificacao);
           Alert.alert('Permissão necessária', 'É preciso autorizar o acesso a uma pasta para poder guardar o ficheiro.');
           return;
         }
@@ -247,6 +287,15 @@ export function useVisualizador() {
             dialogTitle: tituloParam,
           });
         }
+      } else if (Platform.OS === 'web') {
+        // 2c) Web — não há SAF nem Sharing nativo; a forma equivalente de
+        //     "baixar" no browser é abrir o ficheiro numa nova aba, o que
+        //     dispara o download nativo do browser (ou mostra o PDF).
+        try {
+          if (typeof window !== 'undefined') {
+            window.open(cacheDestino, '_blank');
+          }
+        } catch (e) {}
       } else {
         // 2b) iOS — não existe pasta de downloads pública; o ecrã nativo
         //     de partilha (Guardar em Ficheiros, etc.) é o equivalente.
@@ -261,7 +310,7 @@ export function useVisualizador() {
       }
 
       // ── Notificação de conclusão (substitui a de início, mesmo id) ──
-      await Notifications.scheduleNotificationAsync({
+      await agendarNotificacaoSegura({
         identifier: idNotificacao,
         content: {
           title: 'Download concluído',
@@ -272,7 +321,7 @@ export function useVisualizador() {
       });
     } catch (e) {
       console.log('Erro ao baixar PDF:', e?.message || e);
-      await Notifications.dismissNotificationAsync(idNotificacao).catch(() => {});
+      await descartarNotificacaoSegura(idNotificacao);
       Alert.alert('Erro', 'Não foi possível baixar o ficheiro. Verifica a tua ligação à internet.');
     } finally {
       aBaixarRef.current = false;
@@ -282,18 +331,39 @@ export function useVisualizador() {
 
   const abrir = async (uriParam, tituloParam = '') => {
     if (!uriParam) return;
+    // CORRIGIDO: bloqueia toques repetidos enquanto ainda estamos a
+    // detectar o tipo do ficheiro (ver aAbrirRef acima).
+    if (aAbrirRef.current) return;
+    aAbrirRef.current = true;
 
-    const t = await detetarTipoReal(uriParam);
+    try {
+      const t = await detetarTipoReal(uriParam);
 
-    if (t === 'pdf') {
-      baixarPdf(uriParam, tituloParam);
-      return;
+      if (t === 'pdf') {
+        // CORRIGIDO: na web não há download real (nem FileSystem.cacheDirectory
+        // nem Sharing funcionam como no nativo) — em vez de tentar "baixar",
+        // mostra o PDF directamente dentro do modal, num <iframe>, usando o
+        // URL original (sem passar por cache/Notifications). No telemóvel
+        // mantém-se o fluxo de sempre (download + partilha + notificação).
+        if (Platform.OS === 'web') {
+          setUri(uriParam);
+          setTitulo(tituloParam);
+          setTipoConteudo('pdf');
+          setVisivel(true);
+        } else {
+          baixarPdf(uriParam, tituloParam);
+        }
+        return;
+      }
+
+      // Imagem — continua a abrir no modal interno.
+      setUri(uriParam);
+      setTitulo(tituloParam);
+      setTipoConteudo('imagem');
+      setVisivel(true);
+    } finally {
+      aAbrirRef.current = false;
     }
-
-    // Imagem — continua a abrir no modal interno.
-    setUri(uriParam);
-    setTitulo(tituloParam);
-    setVisivel(true);
   };
 
   const fechar = () => {
@@ -301,44 +371,61 @@ export function useVisualizador() {
     setUri(null);
   };
 
-  function Visualizador() {
-    return (
-      <Modal
-        visible={visivel}
-        transparent={false}
-        animationType="slide"
-        onRequestClose={fechar}
-        statusBarTranslucent
-      >
-        <View style={vs.container}>
-          <View style={vs.header}>
-            <TouchableOpacity
-              style={vs.fecharBtn}
-              onPress={fechar}
-              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-            >
-              <Ionicons name="close" size={24} color={C.branco} />
-            </TouchableOpacity>
-            <Text style={vs.headerTitulo} numberOfLines={1}>
-              {titulo || 'Visualizar'}
-            </Text>
-            <View style={{ width: 36 }} />
-          </View>
-          <View style={vs.corpo}>
-            {uri ? (
-              <Image source={{ uri }} style={vs.imagem} resizeMode="contain" />
-            ) : (
-              <View style={vs.centrado}>
-                <ActivityIndicator size="large" color={C.azul} />
-              </View>
-            )}
-          </View>
+  // CORRIGIDO: antes disto era `function Visualizador() { return <Modal>...</Modal> }`,
+  // devolvido no return abaixo e usado como `<Visualizador />`. Como
+  // useVisualizador() corre de novo a cada render, essa função era recriada
+  // com uma identidade nova de cada vez — o React interpretava-a como um
+  // COMPONENTE DIFERENTE a cada render e desmontava/remontava o Modal
+  // inteiro, o que fazia o modal parecer abrir várias vezes com um só
+  // toque (um remount por cada setState: setUri, setTitulo, setTipoConteudo,
+  // setVisivel). Agora construímos directamente o elemento <Modal>, cujo
+  // tipo (importado de 'react-native') É sempre o mesmo entre renders — o
+  // React já não desmonta nada, só actualiza as props normalmente.
+  const visualizadorNode = (
+    <Modal
+      visible={visivel}
+      transparent={false}
+      animationType="slide"
+      onRequestClose={fechar}
+      statusBarTranslucent
+    >
+      <View style={vs.container}>
+        <View style={vs.header}>
+          <TouchableOpacity
+            style={vs.fecharBtn}
+            onPress={fechar}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          >
+            <Ionicons name="close" size={24} color={C.branco} />
+          </TouchableOpacity>
+          <Text style={vs.headerTitulo} numberOfLines={1}>
+            {titulo || 'Visualizar'}
+          </Text>
+          <View style={{ width: 36 }} />
         </View>
-      </Modal>
-    );
-  }
+        <View style={vs.corpo}>
+          {uri && tipoConteudo === 'pdf' ? (
+            // Só acontece na web (ver `abrir`) — <iframe> é um elemento
+            // HTML nativo do browser; o react-native-web deixa-o passar
+            // directamente porque a aplicação corre sobre o react-dom.
+            <iframe
+              src={uri}
+              title={titulo || 'Documento PDF'}
+              style={{ width: '100%', height: '100%', border: 'none', backgroundColor: '#525659' }}
+            />
+          ) : uri ? (
+            <Image source={{ uri }} style={vs.imagem} resizeMode="contain" />
+          ) : (
+            <View style={vs.centrado}>
+              <ActivityIndicator size="large" color={C.azul} />
+            </View>
+          )}
+        </View>
+      </View>
+    </Modal>
+  );
 
-  return { abrir, Visualizador, baixando };
+  return { abrir, Visualizador: visualizadorNode, baixando };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -414,8 +501,9 @@ export function UploadBtnComPreview({
                 <ActivityIndicator size="small" color={C.azul} />
               ) : (
                 <>
-                  <Feather name={ehPDF ? 'download' : 'eye'} size={13} color={C.azul} />
-                  <Text style={ub.verTxt}>{ehPDF ? 'Baixar' : 'Ver'}</Text>
+                  {/* CORRIGIDO: na web um PDF é visualizado (não descarregado) */}
+                  <Feather name={ehPDF && Platform.OS !== 'web' ? 'download' : 'eye'} size={13} color={C.azul} />
+                  <Text style={ub.verTxt}>{ehPDF && Platform.OS !== 'web' ? 'Baixar' : 'Ver'}</Text>
                 </>
               )}
             </TouchableOpacity>
@@ -423,7 +511,7 @@ export function UploadBtnComPreview({
         )}
       </View>
 
-      <Visualizador />
+      {Visualizador}
     </>
   );
 }

@@ -3,9 +3,9 @@
 //      contador começa nos dois lados, áudio/vídeo funciona
 // Fix 2: mensagens só são marcadas como lidas / naoLidas só é zerado
 //        quando a conversa está mesmo em primeiro plano (useFocusEffect)
-// Fix 3: ✅ REMOVIDO o envio de "notificação de mensagem" (enviarNotificacao)
+// Fix 3: removido o envio de "notificação de mensagem" (enviarNotificacao)
 //        ao iniciar uma sala nova. Essa chamada escrevia na coleção raiz
-//        "notificacoes" — a MESMA fonte que useNotifications() lê para o
+//        "notificacoes" — a mesma fonte que useNotifications() lê para o
 //        sino e para a tela de Notificações — fazendo o evento "X iniciou
 //        uma conversa contigo" aparecer lá e contar no badge do sino, em
 //        vez de contar apenas no ícone de mensagem (que já é alimentado,
@@ -16,6 +16,23 @@
 //        documento numa coleção dedicada (ex.: "eventosPush") que uma
 //        Cloud Function no backend ouve e transforma em push — sem nunca
 //        escrever em "notificacoes".
+// Fix 4/5/6: causa raiz encontrada — no Expo Router para WEB, o ecrã da
+//        conversa não desmonta nem perde o foco de verdade ao navegar
+//        para o feed/lista de chats: fica "vivo" em segundo plano, com o
+//        listener de mensagens sempre ativo. Nem useFocusEffect nem
+//        navigation.isFocused() (React Navigation, via useNavigation() do
+//        expo-router) detectam isto de forma fiável no web. A solução:
+//        comparar o outroUid fixo desta instância (useLocalSearchParams,
+//        congelado desde que o ecrã foi aberto) com o outroUid da rota
+//        realmente ativa agora (useGlobalSearchParams) e confirmar também
+//        que a rota ativa é mesmo a de conversa (usePathname). Se algum
+//        destes não coincidir, esta instância NÃO está em primeiro plano,
+//        e não marcamos nada como lido nem zeramos naoLidas.
+// Fix 7: os valores de pathname/params usados dentro do listener de
+//        mensagens (que só é recriado quando chatId muda) tinham de vir
+//        de refs sempre actualizadas — nunca de variáveis de estado lidas
+//        directamente — para evitar comparações com valores obsoletos
+//        (stale closures) do momento em que a conversa foi aberta.
 
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -28,7 +45,7 @@ import {
 } from 'expo-audio';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
-import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useGlobalSearchParams, useLocalSearchParams, usePathname, useRouter } from 'expo-router';
 import { onValue, ref } from 'firebase/database';
 import {
   addDoc,
@@ -365,7 +382,7 @@ export default function ConversaScreen() {
   const [headerSub,     setHeaderSub]     = useState('');
   const preloadFeito = useRef(false);
 
-  // ← NOVO: controla se este ecrã está mesmo em primeiro plano.
+  // ← controla se este ecrã está mesmo em primeiro plano.
   // Evita que um ecrã "vivo" em segundo plano (mantido pelo Expo Router
   // para navegação rápida) continue a marcar mensagens como lidas.
   const estaFocado = useRef(false);
@@ -375,6 +392,36 @@ export default function ConversaScreen() {
       return () => { estaFocado.current = false; };
     }, [])
   );
+
+  // ← no Expo Router para WEB, nem useFocusEffect nem
+  // navigation.isFocused() detetam de forma fiável que este ecrã deixou
+  // de estar em primeiro plano — o ecrã fica "vivo" para trás. Em vez de
+  // perguntar ao React Navigation, comparamos os PARÂMETROS da rota
+  // realmente ativa agora (useGlobalSearchParams) com os parâmetros
+  // desta instância (useLocalSearchParams, fixos desde que abriste esta
+  // conversa) e confirmamos também que a rota ativa é mesmo "conversa"
+  // (usePathname). Só quando tudo isto coincide é que esta instância
+  // está mesmo visível.
+  const pathnameAtual = usePathname();
+  const paramsGlobaisAtuais = useGlobalSearchParams();
+
+  // ← guardamos estes valores em refs (sempre "ao vivo") em vez de os ler
+  // directamente do estado dentro do listener de mensagens mais abaixo,
+  // que só é recriado quando chatId muda e ficaria preso a valores
+  // obsoletos (stale closure) do instante em que a conversa foi aberta.
+  const pathnameAtualRef = useRef(pathnameAtual);
+  useEffect(() => { pathnameAtualRef.current = pathnameAtual; }, [pathnameAtual]);
+
+  const outroUidGlobalRef = useRef(paramsGlobaisAtuais?.outroUid);
+  useEffect(() => { outroUidGlobalRef.current = paramsGlobaisAtuais?.outroUid; }, [paramsGlobaisAtuais?.outroUid]);
+
+  const estaRealmenteEmPrimeiroPlano = useCallback(() => {
+    const pathAgora = pathnameAtualRef.current;
+    const outroUidRotaAtivaAgora = outroUidGlobalRef.current;
+    const rotaAtualEhConversa = !!pathAgora && pathAgora.includes('conversa');
+    const mesmoOutroUid = String(outroUidRotaAtivaAgora || '') === String(outroUid || '');
+    return rotaAtualEhConversa && mesmoOutroUid;
+  }, [outroUid]);
 
   // Chamada
   const [emChamada,     setEmChamada]     = useState(false);
@@ -458,14 +505,14 @@ export default function ConversaScreen() {
         },
         onUserOffline: () => { setRemoteUid(null); terminarInterno(); },
         onLeaveChannel: () => clearInterval(timerChamadaRef.current),
-        onError: (code,msg) => console.warn('[Agora]',code,msg),
+        onError: () => {},
       });
 
       if (tipo==='video') { engine.enableVideo(); engine.startPreview(); }
       engine.enableAudio();
       engineRef.current = engine;
       return true;
-    } catch(e) { console.error('[Agora init]',e); return false; }
+    } catch(e) { return false; }
   };
 
   /* ── Iniciar chamada ──────────────────────────────────────────────── */
@@ -497,7 +544,7 @@ export default function ConversaScreen() {
           autoSubscribeVideo: tipo==='video',
         });
       }
-    } catch(e) { console.log('[joinChannel emissor]',e); }
+    } catch(e) {}
 
     // Grava chamada no Firestore (trigger para FCM push no backend)
     if (chatId) {
@@ -641,8 +688,8 @@ export default function ConversaScreen() {
 
       // ← SÓ marca como lida / zera naoLidas se a conversa está mesmo em
       //    primeiro plano neste momento. Um ecrã "vivo" em segundo plano
-      //    (mantido pelo Expo Router) já não passa aqui.
-      if (!estaFocado.current) return;
+      //    (mantido pelo Expo Router, sobretudo no web) já não passa aqui.
+      if (!estaRealmenteEmPrimeiroPlano()) return;
 
       let marcouAlguma=false;
       snap.docs.forEach(async d=>{
@@ -733,15 +780,39 @@ export default function ConversaScreen() {
   });
 
   /* ── Enviar mensagem ──────────────────────────────────────────────── */
-  const enviarMensagem=async(tc)=>{
-    const tf=(tc||texto).trim(); if(!tf||!chatId||!user) return;
+  const enviarMensagem = async (tc) => {
+    const tf = (tc || texto).trim();
+    if (!tf || !chatId || !user) return;
     setTexto(''); setReplyMsg(null); setEnviando(true);
-    try{
-      const p={uid:user.uid,texto:tf,timestamp:serverTimestamp(),lida:false,entregue:outroOnline};
-      if(replyMsg) p.reply={id:replyMsg.id,texto:replyMsg.texto||(replyMsg.tipo==='imagem'?'📷 Imagem':replyMsg.tipo==='audio'?'🎤 Áudio':'📎 Ficheiro'),uid:replyMsg.uid,nome:replyMsg.uid===user.uid?(perfil?.nome||'Tu'):nomeR};
-      await addDoc(collection(db,'chats',chatId,'messages'),p);
-      await setDoc(doc(db,'chats',chatId),{users:[user.uid,outroUid],ultimaMensagem:tf,ultimoTimestamp:serverTimestamp(),[`nomes.${user.uid}`]:perfil?.nome||'Utilizador',[`nomes.${outroUid}`]:nomeR,[`fotos.${user.uid}`]:perfil?.fotoURL||null,[`fotos.${outroUid}`]:fotoR||null,[`naoLidas.${outroUid}`]:increment(1),ocultoPara:arrayRemove(outroUid)},{merge:true});
-    }catch(e){console.log('[enviarMensagem] ERRO:',e?.code,e?.message,e);}finally{setEnviando(false);}
+    try {
+      const p = { uid: user.uid, texto: tf, timestamp: serverTimestamp(), lida: false, entregue: outroOnline };
+      if (replyMsg) p.reply = {
+        id: replyMsg.id,
+        texto: replyMsg.texto || (replyMsg.tipo === 'imagem' ? '📷 Imagem' : replyMsg.tipo === 'audio' ? '🎤 Áudio' : '📎 Ficheiro'),
+        uid: replyMsg.uid,
+        nome: replyMsg.uid === user.uid ? (perfil?.nome || 'Tu') : nomeR,
+      };
+
+      await addDoc(collection(db, 'chats', chatId, 'messages'), p);
+
+      await setDoc(doc(db, 'chats', chatId), {
+        users: [user.uid, outroUid],
+        ultimaMensagem: tf,
+        ultimoTimestamp: serverTimestamp(),
+        [`nomes.${user.uid}`]: perfil?.nome || 'Utilizador',
+        [`nomes.${outroUid}`]: nomeR,
+        [`fotos.${user.uid}`]: perfil?.fotoURL || null,
+        [`fotos.${outroUid}`]: fotoR || null,
+        [`naoLidas.${outroUid}`]: increment(1),
+        ocultoPara: arrayRemove(outroUid),
+      }, { merge: true });
+
+    } catch (e) {
+      // silencioso — o envio simplesmente não é confirmado; o texto já foi
+      // limpo do input, pelo que uma falha aqui é rara (perda de rede).
+    } finally {
+      setEnviando(false);
+    }
   };
 
   const enviarImagem=async uri=>{
@@ -751,7 +822,7 @@ export default function ConversaScreen() {
       await uploadBytes(r,b); const u=await getDownloadURL(r);
       await addDoc(collection(db,'chats',chatId,'messages'),{uid:user.uid,tipo:'imagem',imagemURL:u,texto:'📷 Imagem',timestamp:serverTimestamp(),lida:false,entregue:outroOnline});
       await setDoc(doc(db,'chats',chatId),{ultimaMensagem:'📷 Imagem',ultimoTimestamp:serverTimestamp(),users:[user.uid,outroUid],[`naoLidas.${outroUid}`]:increment(1),ocultoPara:arrayRemove(outroUid)},{merge:true});
-    }catch(e){console.log('[enviarImagem] ERRO:',e?.code,e?.message,e);Alert.alert('Erro','Não foi possível enviar a imagem.');}
+    }catch(e){Alert.alert('Erro','Não foi possível enviar a imagem.');}
   };
 
   const enviarFicheiro=async(uri,nome)=>{
@@ -761,7 +832,7 @@ export default function ConversaScreen() {
       await uploadBytes(r,b); const u=await getDownloadURL(r);
       await addDoc(collection(db,'chats',chatId,'messages'),{uid:user.uid,tipo:'ficheiro',ficheiroURL:u,ficheiroNome:nome,texto:`📎 ${nome}`,timestamp:serverTimestamp(),lida:false,entregue:outroOnline});
       await setDoc(doc(db,'chats',chatId),{ultimaMensagem:`📎 ${nome}`,ultimoTimestamp:serverTimestamp(),users:[user.uid,outroUid],[`naoLidas.${outroUid}`]:increment(1),ocultoPara:arrayRemove(outroUid)},{merge:true});
-    }catch(e){console.log('[enviarFicheiro] ERRO:',e?.code,e?.message,e);Alert.alert('Erro','Não foi possível enviar o ficheiro.');}
+    }catch(e){Alert.alert('Erro','Não foi possível enviar o ficheiro.');}
   };
 
   const iniciarGravacao=async()=>{
@@ -771,7 +842,7 @@ export default function ConversaScreen() {
       await audioRecorder.prepareToRecordAsync(); audioRecorder.record();
       setGravando(true); setTempoGrav(0);
       timerGravRef.current=setInterval(()=>setTempoGrav(t=>t+1),1000);
-    }catch(e){console.log(e);}
+    }catch(e){}
   };
 
   const pararGravacao=async()=>{
@@ -784,7 +855,7 @@ export default function ConversaScreen() {
       await addDoc(collection(db,'chats',chatId,'messages'),{uid:user.uid,tipo:'audio',audioURL:u,duracao:tempoGrav,texto:'🎤 Áudio',timestamp:serverTimestamp(),lida:false,entregue:outroOnline});
       await setDoc(doc(db,'chats',chatId),{ultimaMensagem:'🎤 Áudio',ultimoTimestamp:serverTimestamp(),users:[user.uid,outroUid],[`naoLidas.${outroUid}`]:increment(1),ocultoPara:arrayRemove(outroUid)},{merge:true});
       setTempoGrav(0);
-    }catch(e){console.log('[pararGravacao] ERRO:',e?.code,e?.message,e);}
+    }catch(e){}
   };
 
   const cancelarGravacao=async()=>{
@@ -813,7 +884,7 @@ export default function ConversaScreen() {
     try{
       const r=await DocumentPicker.getDocumentAsync({type:'*/*',copyToCacheDirectory:true});
       if(!r.canceled&&r.assets[0]){const {uri,name}=r.assets[0]; await enviarFicheiro(uri,name);}
-    }catch(e){console.log('[abrirFicheiro] ERRO:',e?.code,e?.message,e);}
+    }catch(e){}
   };
 
   const adicionarCaptura=async()=>{
@@ -849,7 +920,7 @@ export default function ConversaScreen() {
     try{
       if(paraTodos) await deleteDoc(doc(db,'chats',chatId,'messages',item.id));
       else await updateDoc(doc(db,'chats',chatId,'messages',item.id),{[`apagadaPara.${user.uid}`]:true});
-    }catch(e){console.log(e);}
+    }catch(e){}
   };
 
   // ── Encaminhar mensagem (texto, imagem, áudio ou ficheiro) ──────────
@@ -882,7 +953,7 @@ export default function ConversaScreen() {
       setMensagens([]); setTemMensagens(false);
       setModalDetalhes(false);
       router.back();
-    } catch(e) { console.log(e); }
+    } catch(e) {}
   };
 
   // ── Apagar conversa para todos: apaga a conversa e todas as mensagens
@@ -899,7 +970,7 @@ export default function ConversaScreen() {
       setMensagens([]); setTemMensagens(false);
       setModalDetalhes(false);
       router.back();
-    } catch(e) { console.log(e); }
+    } catch(e) {}
   };
 
   const confirmarApagarSoParaMim = () => {

@@ -7,6 +7,10 @@
     "orientation": "portrait",
     "icon": "./assets/icon-app.png",
     "userInterfaceStyle": "light",
+    "notification": {
+      "vapidPublicKey": "BNNNOiULH84DkIOJ-988Q6ptzUKc6Z_Eg42RQ35RGw1O0FkW5k8fdOfPue4wsBR0oTLi9rS1k9B91awM3YfXwK4",
+      "serviceWorkerPath": "/expo-service-worker.js"
+    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.connectallangola",
@@ -41,7 +45,7 @@
     },
     "web": {
       "bundler": "metro",
-      "output": "static",
+      "output": "single",
       "favicon": "./assets/icon-app.png"
     },
     "plugins": [

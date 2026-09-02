@@ -1,27 +1,29 @@
 import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
-  collection,
-  doc,
-  onSnapshot,
-  orderBy,
-  query,
-  updateDoc,
-  where,
+    collection,
+    doc,
+    onSnapshot,
+    orderBy,
+    query,
+    updateDoc,
+    where,
 } from 'firebase/firestore';
 import { useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  Linking,
-  Modal,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Alert,
+    Linking,
+    Modal,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useVisualizador } from '../../components/VisualizadorFicheiro';
 import { db } from '../../config/firebase';
 import { C } from '../../constants/colors';
 import { useUser } from '../../context/UserContext';
@@ -38,15 +40,41 @@ function estadoInfo(id) {
   return ESTADOS.find(e => e.id === id) || ESTADOS[0];
 }
 
+// Textos das perguntas padrão (as mesmas do vagas.js), usados só para dar um
+// rótulo legível a candidaturas antigas que foram guardadas antes da
+// correção — sem isto, mostrariam o id em bruto (ex: "excel").
+const ROTULOS_PERGUNTAS_ANTIGAS = {
+  excel:           'Há quantos anos você já usa Microsoft Excel no trabalho?',
+  tecnica:         'Há quantos anos de experiência tem na área técnica desta vaga?',
+  disponibilidade: 'Qual é a sua disponibilidade para iniciar (em dias)?',
+};
+
 function iniciais(nome) {
   if (!nome) return '?';
   return nome.split(' ').map(p => p[0]).slice(0, 2).join('').toUpperCase();
+}
+
+// Mostra a foto de perfil do candidato quando existe (candidatoFoto,
+// guardada no momento da candidatura); cai para as iniciais do nome caso
+// contrário — antes o avatar mostrava sempre só as iniciais, mesmo com
+// foto disponível.
+function AvatarCandidato({ foto, nome, size = 42 }) {
+  return (
+    <View style={[s.candAvatar, { width: size, height: size, borderRadius: size / 2, overflow: 'hidden' }]}>
+      {foto
+        ? <Image source={{ uri: foto }} style={{ width: size, height: size, borderRadius: size / 2 }} contentFit="cover" />
+        : <Text style={[s.candAvatarTxt, { fontSize: size * 0.33 }]}>{iniciais(nome)}</Text>}
+    </View>
+  );
 }
 
 export default function CandidatosScreen() {
   const router = useRouter();
   const { user } = useUser();
   const { vagaId, vagaTitulo, vagaAutorUid } = useLocalSearchParams();
+
+  // ── Download/visualização segura de ficheiros (PDF nunca abre no navegador) ──
+  const { abrir, Visualizador, baixando } = useVisualizador();
 
   const [candidaturas, setCandidaturas] = useState([]);
   const [carregando, setCarregando] = useState(true);
@@ -56,9 +84,6 @@ export default function CandidatosScreen() {
   const semPermissao = !user || (vagaAutorUid && vagaAutorUid !== user.uid);
 
   // Escuta em tempo real as candidaturas desta vaga.
-  // (Antes usava useState em vez de useEffect: a função só corria uma vez no
-  // "estado inicial preguiçoso" e nunca era re-executada se vagaId mudasse,
-  // além de o cleanup nunca ser chamado corretamente — corrigido para useEffect.)
   useEffect(() => {
     if (!vagaId || semPermissao) { setCarregando(false); return; }
     setCarregando(true);
@@ -81,6 +106,14 @@ export default function CandidatosScreen() {
     ? candidaturas
     : candidaturas.filter(c => (c.status || 'pendente') === filtro);
 
+  // ── Ir para o perfil público do candidato ──
+  // ⚠️ Ajusta "pathname" e o nome do parâmetro ("uid") para corresponderem
+  // à rota real do perfil público na tua app.
+  const abrirPerfilPublico = (uid) => {
+    if (!uid) return;
+    router.push({ pathname: '/(main)/perfil-publico', params: { uid } });
+  };
+
   const mudarEstado = async (candidatura, novoEstado) => {
     try {
       await updateDoc(doc(db, 'candidaturas', candidatura.id), { status: novoEstado });
@@ -90,14 +123,18 @@ export default function CandidatosScreen() {
     }
   };
 
-  const abrirCV = (url) => {
+  // ── Ver currículo ──
+  // Antes usava Linking.openURL(url), que abria o navegador e mostrava o
+  // link direto do Firebase Storage. Agora usa o mesmo mecanismo de
+  // download seguro do UploadBtnComPreview: descarrega o PDF para o
+  // dispositivo (com notificação de progresso) e nunca expõe a URL.
+  const abrirCV = (url, nomeCandidato) => {
     if (!url) {
       Alert.alert('Indisponível', 'Este candidato não anexou currículo.');
       return;
     }
-    Linking.openURL(url).catch(() =>
-      Alert.alert('Erro', 'Não foi possível abrir o currículo. O ficheiro pode ter sido removido.')
-    );
+    const nomeFicheiro = nomeCandidato ? `curriculo-${nomeCandidato}` : 'curriculo';
+    abrir(url, nomeFicheiro);
   };
 
   const contactarEmail = (candidatura) => {
@@ -169,11 +206,13 @@ export default function CandidatosScreen() {
           const est = estadoInfo(c.status || 'pendente');
           return (
             <TouchableOpacity key={c.id} style={s.candCard} activeOpacity={0.7} onPress={() => setCandidatoSelecionado(c)}>
-              <View style={s.candAvatar}>
-                <Text style={s.candAvatarTxt}>{iniciais(c.candidatoNome)}</Text>
-              </View>
+              <TouchableOpacity onPress={() => abrirPerfilPublico(c.candidatoUid)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                <AvatarCandidato foto={c.candidatoFoto} nome={c.candidatoNome} />
+              </TouchableOpacity>
               <View style={{ flex: 1, marginLeft: 12 }}>
-                <Text style={s.candNome}>{c.candidatoNome || 'Candidato'}</Text>
+                <TouchableOpacity onPress={() => abrirPerfilPublico(c.candidatoUid)} hitSlop={{ top: 4, bottom: 4, left: 0, right: 0 }}>
+                  <Text style={s.candNome}>{c.candidatoNome || 'Candidato'}</Text>
+                </TouchableOpacity>
                 <Text style={s.candMeta}>{c.email}</Text>
                 <View style={[s.estadoBadge, { backgroundColor: est.corFundo }]}>
                   <Text style={[s.estadoBadgeTxt, { color: est.cor }]}>{est.label}</Text>
@@ -200,11 +239,13 @@ export default function CandidatosScreen() {
 
               <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
-                  <View style={[s.candAvatar, { width: 56, height: 56, borderRadius: 28 }]}>
-                    <Text style={[s.candAvatarTxt, { fontSize: 18 }]}>{iniciais(candidatoSelecionado.candidatoNome)}</Text>
-                  </View>
+                  <TouchableOpacity onPress={() => abrirPerfilPublico(candidatoSelecionado.candidatoUid)}>
+                    <AvatarCandidato foto={candidatoSelecionado.candidatoFoto} nome={candidatoSelecionado.candidatoNome} size={56} />
+                  </TouchableOpacity>
                   <View>
-                    <Text style={s.detNome}>{candidatoSelecionado.candidatoNome || 'Candidato'}</Text>
+                    <TouchableOpacity onPress={() => abrirPerfilPublico(candidatoSelecionado.candidatoUid)}>
+                      <Text style={s.detNome}>{candidatoSelecionado.candidatoNome || 'Candidato'}</Text>
+                    </TouchableOpacity>
                     <Text style={s.detMeta}>{candidatoSelecionado.email}</Text>
                     <Text style={s.detMeta}>{candidatoSelecionado.telefone}</Text>
                   </View>
@@ -231,9 +272,19 @@ export default function CandidatosScreen() {
                 <View style={s.divider} />
 
                 {candidatoSelecionado.cvUrl ? (
-                  <TouchableOpacity style={s.cvBtn} onPress={() => abrirCV(candidatoSelecionado.cvUrl)}>
-                    <Ionicons name="document-text-outline" size={18} color={C.azul} />
-                    <Text style={s.cvBtnTxt}>Ver currículo</Text>
+                  <TouchableOpacity
+                    style={s.cvBtn}
+                    onPress={() => abrirCV(candidatoSelecionado.cvUrl, candidatoSelecionado.candidatoNome)}
+                    disabled={baixando}
+                  >
+                    {baixando ? (
+                      <ActivityIndicator size="small" color={C.azul} />
+                    ) : (
+                      <>
+                        <Ionicons name="document-text-outline" size={18} color={C.azul} />
+                        <Text style={s.cvBtnTxt}>Ver currículo</Text>
+                      </>
+                    )}
                   </TouchableOpacity>
                 ) : (
                   <Text style={s.detMeta}>Sem currículo anexado.</Text>
@@ -244,23 +295,44 @@ export default function CandidatosScreen() {
                   <Text style={s.cvBtnTxt}>Contactar por e-mail</Text>
                 </TouchableOpacity>
 
-                {candidatoSelecionado.perguntas && Object.keys(candidatoSelecionado.perguntas).length > 0 && (
-                  <>
-                    <View style={s.divider} />
-                    <Text style={s.secTitulo}>Respostas de triagem</Text>
-                    {Object.entries(candidatoSelecionado.perguntas).map(([chave, valor]) => (
-                      <View key={chave} style={{ marginTop: 12 }}>
-                        <Text style={s.perguntaLabel}>{chave}</Text>
-                        <Text style={s.perguntaValor}>{String(valor)}</Text>
-                      </View>
-                    ))}
-                  </>
-                )}
+                {(() => {
+                  // Candidaturas novas trazem "perguntasRespondidas" já com o
+                  // texto da pergunta guardado. Candidaturas antigas só têm
+                  // "perguntas" (id → valor) — nesse caso mostramos pelo
+                  // menos um rótulo legível em vez do id em bruto.
+                  const respondidas = Array.isArray(candidatoSelecionado.perguntasRespondidas)
+                    ? candidatoSelecionado.perguntasRespondidas
+                    : candidatoSelecionado.perguntas
+                      ? Object.entries(candidatoSelecionado.perguntas).map(([id, resposta]) => ({
+                          id,
+                          pergunta: ROTULOS_PERGUNTAS_ANTIGAS[id] || id,
+                          resposta,
+                        }))
+                      : [];
+
+                  if (respondidas.length === 0) return null;
+
+                  return (
+                    <>
+                      <View style={s.divider} />
+                      <Text style={s.secTitulo}>Respostas de triagem</Text>
+                      {respondidas.map(p => (
+                        <View key={p.id} style={{ marginTop: 12 }}>
+                          <Text style={s.perguntaLabel}>{p.pergunta}</Text>
+                          <Text style={s.perguntaValor}>{p.resposta !== '' && p.resposta != null ? String(p.resposta) : '—'}</Text>
+                        </View>
+                      ))}
+                    </>
+                  );
+                })()}
               </ScrollView>
             </>
           )}
         </SafeAreaView>
       </Modal>
+
+      {/* Necessário para o download de PDF / preview de imagens funcionar */}
+      {Visualizador}
     </SafeAreaView>
   );
 }

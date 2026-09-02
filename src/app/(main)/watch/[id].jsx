@@ -9,11 +9,22 @@
 // NOTA: o vídeo já não importa `react-native-agora` diretamente — usa o
 // componente AgoraSurface (que tem versão .native.jsx e .web.jsx), para a
 // build web não tentar empacotar o módulo nativo do Agora.
+//
+// ── ALTERAÇÕES ──
+// 1) Já não mostra o número de vezes que se tocou no coração — o toque
+//    continua a reagir e a animar (FloatingHearts), só deixou de haver um
+//    contador visível ao lado do ícone.
+// 2) Quando o anfitrião desliga a câmara (liveInfo.cameraDesligada), passa
+//    a mostrar-se a foto de perfil dele em vez de ecrã preto/parado.
+// 3) Quando o anfitrião põe o vídeo em pausa (liveInfo.videoPausado),
+//    mostra-se o logótipo da ConnectAll em círculo, até ele retomar.
+//    Estes dois campos vêm do mesmo documento da live lido por ouvirLive
+//    (liveInteracoesService.js), já actualizado pelo broadcast.jsx.
 
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AgoraSurface, { VideoSourceType } from '../../../components/live/AgoraSurface';
 import FloatingHearts from '../../../components/live/FloatingHearts';
@@ -33,6 +44,12 @@ import {
   sairDoPalco,
 } from '../../../services/liveInteracoesService';
 import { entrarComoOuvinte, obterTokenAgora, sairComoOuvinte, uidNumericoDe } from '../../../services/livesService';
+
+// Caminho corrigido: o ficheiro está em src/app/(main)/watch/[id].jsx (uma
+// pasta mais profundo que o broadcast.jsx) e o assets/ vive na raiz do
+// projecto (fora de src/) — por isso são precisos 4 níveis (../../../../).
+const LOGO_CONNECTALL = require('../../../../assets/icon-app.png');
+
 export default function WatchScreen() {
   const router = useRouter();
   const { user, perfil } = useUser();
@@ -241,14 +258,41 @@ export default function WatchScreen() {
   const convidadosNoPalco = palco.filter((p) => p.uid !== user?.uid);
   const mainVideoUid = hostNumUid ?? hostNumUidLegadoRef.current;
 
+  const videoPausado = !!liveInfo?.videoPausado;
+  const cameraDesligada = !videoPausado && !!liveInfo?.cameraDesligada;
+
   return (
     <View style={styles.container}>
       {hostConectado && mainVideoUid != null ? (
-        <AgoraSurface
-          style={StyleSheet.absoluteFill}
-          uid={mainVideoUid}
-          sourceType={VideoSourceType.VideoSourceRemote}
-        />
+        <>
+          <AgoraSurface
+            style={StyleSheet.absoluteFill}
+            uid={mainVideoUid}
+            sourceType={VideoSourceType.VideoSourceRemote}
+          />
+
+          {videoPausado && (
+            <View style={styles.overlayCentro}>
+              <View style={styles.logoCirculo}>
+                <Image source={LOGO_CONNECTALL} style={styles.logoImg} resizeMode="contain" />
+              </View>
+              <Text style={styles.overlayTexto}>Vídeo em pausa</Text>
+            </View>
+          )}
+
+          {cameraDesligada && (
+            <View style={styles.overlayCentro}>
+              {liveInfo?.hostFotoURL ? (
+                <Image source={{ uri: liveInfo.hostFotoURL }} style={styles.avatarCirculo} />
+              ) : (
+                <View style={[styles.avatarCirculo, styles.avatarFallback]}>
+                  <Text style={styles.avatarFallbackTxt}>{(hostNome || 'U')[0]}</Text>
+                </View>
+              )}
+              <Text style={styles.overlayTexto}>Câmara desligada</Text>
+            </View>
+          )}
+        </>
       ) : (
         <View style={styles.aguardando}>
           <Text style={styles.aguardandoText}>{erro || 'A ligar à transmissão…'}</Text>
@@ -297,9 +341,10 @@ export default function WatchScreen() {
           </View>
 
           <View style={styles.acoesLaterais}>
+            {/* Reage e anima (FloatingHearts) — já não mostra um número de
+                toques ao lado do coração. */}
             <TouchableOpacity style={styles.acaoBtn} onPress={handleReagir}>
               <Ionicons name="heart" size={26} color="#fff" />
-              <Text style={styles.acaoCount}>{liveInfo?.gostosCount || 0}</Text>
             </TouchableOpacity>
 
             <TouchableOpacity style={styles.acaoBtn} onPress={() => setShareAberto(true)}>
@@ -352,7 +397,6 @@ const styles = StyleSheet.create({
   },
   acoesLaterais: { alignItems: 'center', gap: 18, paddingBottom: 6 },
   acaoBtn: { alignItems: 'center', gap: 3 },
-  acaoCount: { color: '#fff', fontSize: 11, fontWeight: '700' },
   acaoLabel: { color: '#fff', fontSize: 10, fontWeight: '600' },
   meuPalcoWrap: {
     position: 'absolute',
@@ -364,7 +408,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     backgroundColor: '#1F1F1F',
     borderWidth: 2,
-    borderColor: '#EC4C89',
+    borderColor: '#0A66C2',
   },
   meuPalcoVideo: { ...StyleSheet.absoluteFillObject },
   meuPalcoControles: {
@@ -384,4 +428,37 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+
+  // ── Sobreposições: vídeo em pausa / câmara desligada ──
+  overlayCentro: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#000',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+  },
+  logoCirculo: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 16,
+  },
+  logoImg: { width: '100%', height: '100%' },
+  avatarCirculo: {
+    width: 112,
+    height: 112,
+    borderRadius: 56,
+    borderWidth: 3,
+    borderColor: 'rgba(255,255,255,0.25)',
+  },
+  avatarFallback: {
+    backgroundColor: '#334155',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarFallbackTxt: { color: '#fff', fontSize: 42, fontWeight: '800' },
+  overlayTexto: { color: 'rgba(255,255,255,0.7)', fontSize: 13, fontWeight: '600' },
 });

@@ -6,17 +6,17 @@ import { signOut } from 'firebase/auth';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
 import {
-  ActivityIndicator,
-  Image,
-  ImageBackground,
-  Linking,
-  Modal,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Image,
+    ImageBackground,
+    Linking,
+    Modal,
+    ScrollView,
+    StatusBar,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import BloqueioAnonimo from '../../components/BloqueioAnonimo';
@@ -446,7 +446,7 @@ export default function MyProfileEmpresaScreen() {
         <View style={{ height: 40 }} />
       </ScrollView>
 
-      <Visualizador />
+      {Visualizador}
 
       <Modal visible={modalImagem} transparent animationType="fade" onRequestClose={() => setModalImagem(false)}>
         <View style={s.modalFundo}>

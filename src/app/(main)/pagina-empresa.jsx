@@ -3,6 +3,17 @@
  *
  * FEED COMPLETO DA PÁGINA DA EMPRESA — ConnectAll Angola
  *
+ * ── CORREÇÃO ──
+ * Esta versão do ecrã tinha deixado de ter QUALQUER formulário de criação:
+ * se `perfilEmpresa` não existisse, mostrava apenas uma mensagem "Ainda não
+ * existe uma Página da Empresa" com um botão "Voltar" — sem nenhuma forma
+ * de avançar. Foi reposto o formulário de criação (Nome, Setor, NIF,
+ * Telefone, E-mail, Sobre), usando o mesmo `guardarPerfilEmpresa` que já é
+ * usado neste ficheiro para editar o perfil, o logotipo e a capa. Depois
+ * de criada, o próprio UserContext (via listener em tempo real) actualiza
+ * `perfilEmpresa`, e este ecrã passa automaticamente a mostrar o feed da
+ * empresa — sem precisar de navegar para outro lado.
+ *
  * Compatível com o UserContext fornecido:
  * - usa users/{uid}/perfis/empresa como identidade da Página;
  * - publica em posts com autorTipo: "empresa" (campo extra) e
@@ -195,7 +206,7 @@ async function uploadFicheiroStorage(uri, caminho) {
 
 export default function PaginaEmpresa() {
   const router = useRouter();
-  const { user, perfilEmpresa, contextoAtivo, guardarPerfilEmpresa } = useUser();
+  const { user, perfilEmpresa, contextoAtivo, trocarContexto, guardarPerfilEmpresa } = useUser();
 
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -239,6 +250,74 @@ export default function PaginaEmpresa() {
     facebook: '',
     horario: '',
   });
+
+  // ── CRIAÇÃO DA PÁGINA (quando perfilEmpresa ainda não existe) ──
+  const [criarForm, setCriarForm] = useState({
+    nomeEmpresa: '',
+    setor: '',
+    nif: '',
+    telefone: '',
+    email: '',
+    sobre: '',
+  });
+  const [criandoPagina, setCriandoPagina] = useState(false);
+
+  const atualizarCampoCriar = (campo, valor) => {
+    setCriarForm(prev => ({ ...prev, [campo]: valor }));
+  };
+
+  const criarPaginaEmpresa = async () => {
+    if (!user?.uid) return;
+
+    if (!criarForm.nomeEmpresa.trim()) {
+      Alert.alert('Campo obrigatório', 'Introduz o nome da empresa.');
+      return;
+    }
+    if (!criarForm.setor.trim()) {
+      Alert.alert('Campo obrigatório', 'Introduz o setor de actividade.');
+      return;
+    }
+    if (!criarForm.nif.trim()) {
+      Alert.alert('Campo obrigatório', 'Introduz o NIF da empresa.');
+      return;
+    }
+    if (!criarForm.telefone.trim()) {
+      Alert.alert('Campo obrigatório', 'Introduz o telefone da empresa.');
+      return;
+    }
+    if (!criarForm.email.trim() || !criarForm.email.includes('@')) {
+      Alert.alert('E-mail inválido', 'Introduz um e-mail válido da empresa.');
+      return;
+    }
+
+    setCriandoPagina(true);
+    try {
+      await guardarPerfilEmpresa({
+        nomeEmpresa: criarForm.nomeEmpresa.trim(),
+        setor: criarForm.setor.trim(),
+        nif: criarForm.nif.trim(),
+        telefone: criarForm.telefone.trim(),
+        email: criarForm.email.trim(),
+        sobre: criarForm.sobre.trim(),
+        criadaPor: user.uid,
+      });
+
+      // Assim que a página existe, muda já a identidade activa para
+      // "empresa" — tal como acontece nas Páginas do Facebook, entra-se
+      // directamente a gerir a página que se acabou de criar.
+      try {
+        await trocarContexto('empresa');
+      } catch (_) {
+        // Não crítico: se ainda não propagou a tempo, o utilizador troca
+        // manualmente pelo menu — a página já foi criada com sucesso.
+      }
+    } catch (error) {
+      console.error('[PaginaEmpresa] criar página:', error);
+      Alert.alert('Erro', error?.message || 'Não foi possível criar a página da empresa.');
+    } finally {
+      setCriandoPagina(false);
+    }
+  };
 
   const companyName = perfilEmpresa?.nomeEmpresa || 'Página da Empresa';
   const companyLogo = perfilEmpresa?.logoURL || null;
@@ -849,20 +928,113 @@ export default function PaginaEmpresa() {
     );
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // AINDA NÃO EXISTE PÁGINA — FORMULÁRIO DE CRIAÇÃO
+  // ═══════════════════════════════════════════════════════════
+  // Antes desta correcção, chegar aqui sem perfilEmpresa mostrava só uma
+  // mensagem e um botão "Voltar" — sem nenhuma forma de criar a página.
+  // Agora mostra logo o formulário; assim que a criação for concluída, o
+  // UserContext actualiza perfilEmpresa e este ecrã passa sozinho a
+  // mostrar o feed abaixo, sem precisar de nenhuma navegação extra.
   if (!perfilEmpresa) {
     return (
-      <SafeAreaView style={styles.center}>
-        <Ionicons name="business-outline" size={52} color={C.blue} />
-        <Text style={styles.emptyTitle}>Ainda não existe uma Página da Empresa.</Text>
-        <Text style={styles.emptyText}>
-          Cria a página primeiro para poderes publicar como empresa.
-        </Text>
-        <TouchableOpacity
-          style={styles.primaryButton}
-          onPress={() => router.back()}
-        >
-          <Text style={styles.primaryButtonText}>Voltar</Text>
-        </TouchableOpacity>
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <StatusBar barStyle="dark-content" backgroundColor={C.white} />
+
+        <View style={styles.topBar}>
+          <TouchableOpacity onPress={() => router.back()} style={styles.iconButton}>
+            <Ionicons name="arrow-back" size={24} color={C.text} />
+          </TouchableOpacity>
+          <View style={styles.topTitleWrap}>
+            <Text style={styles.topTitle}>Criar Página da Empresa</Text>
+          </View>
+          <View style={{ width: 42 }} />
+        </View>
+
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <ScrollView contentContainerStyle={styles.criarWrap} showsVerticalScrollIndicator={false}>
+            <View style={styles.emptyIcon}>
+              <Ionicons name="business" size={34} color={C.blue} />
+            </View>
+            <Text style={styles.criarTitulo}>Cria a página da tua empresa</Text>
+            <Text style={styles.criarSubtitulo}>
+              Publica conteúdos, mostra vagas e apresenta a tua empresa aos profissionais na ConnectAll Angola.
+            </Text>
+
+            <Text style={styles.formLabel}>Nome da Empresa *</Text>
+            <TextInput
+              style={styles.formInput}
+              value={criarForm.nomeEmpresa}
+              onChangeText={v => atualizarCampoCriar('nomeEmpresa', v)}
+              placeholder="Ex: Unitel S.A."
+              placeholderTextColor="#999"
+            />
+
+            <Text style={styles.formLabel}>Setor de Actividade *</Text>
+            <TextInput
+              style={styles.formInput}
+              value={criarForm.setor}
+              onChangeText={v => atualizarCampoCriar('setor', v)}
+              placeholder="Ex: Tecnologia, Banca, Construção"
+              placeholderTextColor="#999"
+            />
+
+            <Text style={styles.formLabel}>NIF *</Text>
+            <TextInput
+              style={styles.formInput}
+              value={criarForm.nif}
+              onChangeText={v => atualizarCampoCriar('nif', v)}
+              placeholder="Número de Identificação Fiscal"
+              placeholderTextColor="#999"
+              keyboardType="numeric"
+            />
+
+            <Text style={styles.formLabel}>Telefone *</Text>
+            <TextInput
+              style={styles.formInput}
+              value={criarForm.telefone}
+              onChangeText={v => atualizarCampoCriar('telefone', v)}
+              placeholder="9XX XXX XXX"
+              placeholderTextColor="#999"
+              keyboardType="phone-pad"
+            />
+
+            <Text style={styles.formLabel}>E-mail *</Text>
+            <TextInput
+              style={styles.formInput}
+              value={criarForm.email}
+              onChangeText={v => atualizarCampoCriar('email', v)}
+              placeholder="empresa@email.com"
+              placeholderTextColor="#999"
+              keyboardType="email-address"
+              autoCapitalize="none"
+            />
+
+            <Text style={styles.formLabel}>Sobre a Empresa</Text>
+            <TextInput
+              style={[styles.formInput, styles.formTextarea]}
+              value={criarForm.sobre}
+              onChangeText={v => atualizarCampoCriar('sobre', v)}
+              placeholder="Uma breve descrição da empresa..."
+              placeholderTextColor="#999"
+              multiline
+            />
+
+            <TouchableOpacity
+              style={[styles.primaryButton, styles.criarBtn, criandoPagina && { opacity: 0.6 }]}
+              onPress={criarPaginaEmpresa}
+              disabled={criandoPagina}
+            >
+              {criandoPagina ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text style={styles.primaryButtonText}>Criar Página</Text>
+              )}
+            </TouchableOpacity>
+
+            <View style={{ height: 40 }} />
+          </ScrollView>
+        </KeyboardAvoidingView>
       </SafeAreaView>
     );
   }
@@ -1699,6 +1871,33 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
 
+  // ── Formulário de criação da página ──
+  criarWrap: {
+    paddingHorizontal: 20,
+    paddingTop: 24,
+    paddingBottom: 40,
+    alignItems: 'stretch',
+  },
+  criarTitulo: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: C.text,
+    textAlign: 'center',
+    marginTop: 4,
+    marginBottom: 6,
+  },
+  criarSubtitulo: {
+    fontSize: 13,
+    color: C.muted,
+    textAlign: 'center',
+    lineHeight: 19,
+    marginBottom: 24,
+  },
+  criarBtn: {
+    marginTop: 18,
+    marginHorizontal: 0,
+  },
+
   companyCard: {
     backgroundColor: C.white,
     marginBottom: 10,
@@ -2178,6 +2377,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 12,
+    alignSelf: 'center',
   },
   emptyTitle: {
     fontSize: 18,

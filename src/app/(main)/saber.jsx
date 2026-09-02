@@ -9,20 +9,13 @@
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import {
-  AudioModule,
-  RecordingPresets,
-  setAudioModeAsync,
-  useAudioPlayer,
-  useAudioPlayerStatus,
-  useAudioRecorder,
-  useAudioRecorderState,
-} from 'expo-audio';
 import * as Clipboard from 'expo-clipboard';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as ImagePicker from 'expo-image-picker';
-import * as MediaLibrary from 'expo-media-library';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+// O Metro escolhe automaticamente mediaLibraryNative.web.js na Web (stub,
+// sem tocar no módulo nativo) e mediaLibraryNative.js em iOS/Android (real).
+// Mesmo padrão já usado para o Agora (ver services/agoraNative.js/.web.js).
 import {
   addDoc,
   arrayRemove,
@@ -64,6 +57,16 @@ import BoasVindasSala from '../../components/BoasVindasSala';
 import { app, db } from '../../config/firebase';
 import { useUser } from '../../context/UserContext';
 import { AgoraEngine } from '../../services/AgoraEngine';
+import {
+  AudioModule,
+  RecordingPresets,
+  setAudioModeAsync,
+  useAudioPlayer,
+  useAudioPlayerStatus,
+  useAudioRecorder,
+  useAudioRecorderState,
+} from '../../services/audioNative';
+import MediaLibrary from '../../services/mediaLibraryNative';
 
 const BEGE = '#F5F0EB';
 const storage = getStorage(app);
@@ -1421,6 +1424,22 @@ function ModalClubeDetalhe({ clubeId, onFechar, meuUid, meuPerfil, focoPostId })
 
   const guardarFotoClube = async () => {
     if (!fotoClube || aGuardarFoto) return;
+    if (Platform.OS === 'web') {
+      try {
+        const link = document.createElement('a');
+        link.href = fotoClube;
+        link.download = `clube_${clubeId}.jpg`;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      } catch (e) {
+        console.error(e);
+        Alert.alert('Erro', 'Não foi possível transferir a foto. Podes clicar com o botão direito na imagem e escolher "Guardar imagem".');
+      }
+      return;
+    }
     setAGuardarFoto(true);
     try {
       const permissao = await MediaLibrary.requestPermissionsAsync();
@@ -1541,7 +1560,7 @@ function ModalClubeDetalhe({ clubeId, onFechar, meuUid, meuPerfil, focoPostId })
                 </TouchableOpacity>
                 <Image source={{ uri: fotoClube }} style={cd.fotoViewerImagem} resizeMode="contain" />
                 <TouchableOpacity style={cd.fotoViewerGuardar} onPress={guardarFotoClube} disabled={aGuardarFoto}>
-                  {aGuardarFoto ? <ActivityIndicator color="#fff" /> : <><Ionicons name="download-outline" size={20} color="#fff" /><Text style={cd.fotoViewerGuardarTxt}>Guardar foto</Text></>}
+                  {aGuardarFoto ? <ActivityIndicator color="#fff" /> : <><Ionicons name={Platform.OS === 'web' ? 'download-outline' : 'download-outline'} size={20} color="#fff" /><Text style={cd.fotoViewerGuardarTxt}>{Platform.OS === 'web' ? 'Transferir foto' : 'Guardar foto'}</Text></>}
                 </TouchableOpacity>
               </View>
             </Modal>

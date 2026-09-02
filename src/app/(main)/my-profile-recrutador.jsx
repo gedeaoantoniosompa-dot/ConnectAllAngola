@@ -43,23 +43,23 @@ import { signOut } from 'firebase/auth';
 import { doc, getDoc, onSnapshot } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
 import {
-  ActivityIndicator,
-  Image,
-  ImageBackground,
-  Linking,
-  Modal,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Image,
+    ImageBackground,
+    Linking,
+    Modal,
+    ScrollView,
+    StatusBar,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import BloqueioAnonimo from '../../components/BloqueioAnonimo';
 import { useVisualizador } from '../../components/VisualizadorFicheiro';
 import { auth, db } from '../../config/firebase';
-import { uploadFotoPerfil } from '../../config/utils/uploadFoto';
+import { uploadFotoCapa, uploadFotoPerfil } from '../../config/utils/uploadFoto';
 import { useUser } from '../../context/UserContext';
 
 const C = {
@@ -229,6 +229,8 @@ export default function MyProfileRecrutadorScreen() {
   const perfilInstitucionalCompleto = !!(empresaAtual && cargoAtual);
 
   const temRedes = perfil.linkedin || perfil.github || perfil.behance || perfil.website;
+  const visualizacoesPerfil   = perfil?.analytics?.perfilVisualizacoes?.count   || 0;
+  const impressoesPublicacoes = perfil?.analytics?.publicacoesImpressoes?.count || 0;
 
   // ── "Editar perfil" abre o ecrã unificado já no passo de dados pessoais ──
   const irParaEditar = () =>
@@ -275,7 +277,13 @@ export default function MyProfileRecrutadorScreen() {
     if (!r.canceled && user) {
       setAtualizandoCapa(true);
       try {
-        const url = await uploadFotoPerfil(`${user.uid}_capa`, r.assets[0].uri);
+        // Antes: uploadFotoPerfil(`${user.uid}_capa`, ...) — usava um ID
+        // inventado, o que fazia o setDoc interno criar um documento
+        // novo e vazio em users/<uid>_capa (visível em "Conexões"), em
+        // vez de actualizar o perfil real do recrutador. Corrigido para
+        // usar a função certa (uploadFotoCapa, que já grava no campo
+        // capaURL) com o UID real do utilizador.
+        const url = await uploadFotoCapa(user.uid, r.assets[0].uri);
         await guardarPerfil({ capaURL: url });
       } catch { await guardarPerfil({ capaURL: r.assets[0].uri }); }
       finally { setAtualizandoCapa(false); }
@@ -400,15 +408,16 @@ export default function MyProfileRecrutadorScreen() {
           <View style={s.analiseItem}>
             <Ionicons name="people-outline" size={22} color={C.cinza4} style={{ marginRight: 12 }} />
             <View>
-              <Text style={s.analiseNum}>0 visualizações do perfil</Text>
+              <Text style={s.analiseNum}>{visualizacoesPerfil} visualizações do perfil</Text>
               <Text style={s.analiseDesc}>Complete o perfil para atrair mais visitantes.</Text>
+              <Text style={s.analiseDesc}>Ciclo atual (repõe a cada 30 dias)</Text>
             </View>
           </View>
           <View style={s.analiseItem}>
             <Ionicons name="bar-chart-outline" size={22} color={C.cinza4} style={{ marginRight: 12 }} />
             <View>
-              <Text style={s.analiseNum}>0 impressões das publicações</Text>
-              <Text style={s.analiseDesc}>Últimos 7 dias</Text>
+              <Text style={s.analiseNum}>{impressoesPublicacoes} impressões das publicações</Text>
+              <Text style={s.analiseDesc}>Ciclo atual (repõe a cada 30 dias)</Text>
             </View>
           </View>
         </SeccaoCard>
@@ -570,7 +579,7 @@ export default function MyProfileRecrutadorScreen() {
         <View style={{ height: 40 }} />
       </ScrollView>
 
-      <Visualizador />
+      {Visualizador}
 
       <Modal visible={modalImagem} transparent animationType="fade" onRequestClose={() => setModalImagem(false)}>
         <View style={s.modalFundo}>

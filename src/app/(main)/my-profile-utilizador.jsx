@@ -8,15 +8,15 @@ import { signOut } from 'firebase/auth';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
 import {
-  ActivityIndicator, Alert, Image, ImageBackground, Modal,
-  ScrollView, StatusBar, StyleSheet, Text,
-  TouchableOpacity, View
+    ActivityIndicator, Alert, Image, ImageBackground, Modal,
+    ScrollView, StatusBar, StyleSheet, Text,
+    TouchableOpacity, View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import BloqueioAnonimo from '../../components/BloqueioAnonimo';
 import { useVisualizador } from '../../components/VisualizadorFicheiro';
 import { auth, db } from '../../config/firebase';
-import { uploadFotoPerfil } from '../../config/utils/uploadFoto';
+import { uploadFotoCapa, uploadFotoPerfil } from '../../config/utils/uploadFoto';
 import { useUser } from '../../context/UserContext';
 
 const C = {
@@ -162,6 +162,8 @@ export default function MyProfileScreen() {
   const compPessoais  = Array.isArray(perfil?.competenciasPessoais) ? perfil.competenciasPessoais : [];
   const idiomas       = Array.isArray(perfil?.idiomas)              ? perfil.idiomas              : [];
   const certUrls      = Array.isArray(perfil?.certUrls)             ? perfil.certUrls             : [];
+  const visualizacoesPerfil   = perfil?.analytics?.perfilVisualizacoes?.count   || 0;
+  const impressoesPublicacoes = perfil?.analytics?.publicacoesImpressoes?.count || 0;
 
   const camposTotal = [
     perfil?.fotoURL, perfil?.nome, titulo, resumoPerfil, perfil?.situacaoProf,
@@ -216,7 +218,13 @@ export default function MyProfileScreen() {
       if (!result.canceled && result.assets[0].uri && user) {
         setAtualizandoCapa(true);
         try {
-          const url = await uploadFotoPerfil(`${user.uid}_capa`, result.assets[0].uri);
+          // Antes: uploadFotoPerfil(`${user.uid}_capa`, ...) — usava um ID
+          // inventado, o que fazia o setDoc interno criar um documento
+          // novo e vazio em users/<uid>_capa (visível em "Conexões"), em
+          // vez de actualizar o perfil real do utilizador. Corrigido para
+          // usar a função certa (uploadFotoCapa, que já grava no campo
+          // capaURL) com o UID real do utilizador.
+          const url = await uploadFotoCapa(user.uid, result.assets[0].uri);
           await guardarPerfil({ capaURL: url });
         } catch { await guardarPerfil({ capaURL: result.assets[0].uri }); }
       }
@@ -441,16 +449,17 @@ export default function MyProfileScreen() {
           <View style={s.analiseItem}>
             <Ionicons name="people-outline" size={22} color={C.cinza4} style={{ marginRight: 12 }} />
             <View>
-              <Text style={s.analiseNum}>0 visualizações do perfil</Text>
+              <Text style={s.analiseNum}>{visualizacoesPerfil} visualizações do perfil</Text>
               <Text style={s.analiseDesc}>Atualize o seu perfil para atrair visitantes.</Text>
+              <Text style={s.analiseDescSub}>Ciclo atual (repõe a cada 30 dias)</Text>
             </View>
           </View>
           <View style={s.analiseItem}>
             <Ionicons name="bar-chart-outline" size={22} color={C.cinza4} style={{ marginRight: 12 }} />
             <View>
-              <Text style={s.analiseNum}>0 impressões das publicações</Text>
+              <Text style={s.analiseNum}>{impressoesPublicacoes} impressões das publicações</Text>
               <Text style={s.analiseDesc}>Comece uma publicação para aumentar o engagement.</Text>
-              <Text style={s.analiseDescSub}>Últimos 7 dias</Text>
+              <Text style={s.analiseDescSub}>Ciclo atual (repõe a cada 30 dias)</Text>
             </View>
           </View>
           <TouchableOpacity style={s.exibirAnalisesBtn}>
@@ -916,7 +925,7 @@ export default function MyProfileScreen() {
       <BloqueioAnonimo visivel={modalBloqueio} tipo="acao" onFechar={() => setModalBloqueio(false)} />
 
       {/* Visualizador de documentos (PDF + imagens) */}
-      <Visualizador />
+      {Visualizador}
     </SafeAreaView>
   );
 }

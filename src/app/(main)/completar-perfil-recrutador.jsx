@@ -35,19 +35,19 @@ import { doc, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useEffect, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  Image,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View
+    ActivityIndicator,
+    Alert,
+    Image,
+    KeyboardAvoidingView,
+    Modal,
+    Platform,
+    ScrollView,
+    StatusBar,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import SeletorDataNascimento from '../../components/SeletorDataNascimento';
@@ -1006,7 +1006,7 @@ export default function CompletarPerfilRecrutadorScreen() {
       <ModalLista visivel={modalSetor}         titulo="Setor de Atuação"               lista={SETORES}        valor={setor}        onSelect={setSetor}        onFechar={() => setModalSetor(false)} />
       <ModalLista visivel={modalTipoDocProf}   titulo="Tipo de Documento Profissional" lista={TIPOS_DOC_PROF} valor={tipoDocProf}  onSelect={setTipoDocProf}  onFechar={() => setModalTipoDocProf(false)} />
 
-      <Visualizador />
+      {Visualizador}
     </SafeAreaView>
   );
 }

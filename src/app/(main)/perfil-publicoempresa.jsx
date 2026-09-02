@@ -42,6 +42,16 @@
  *   vídeos — tanto na lista como no visualizador fullscreen — a
  *   pausar.
  *
+ * CORRIGIDO (texto solto / "Unexpected text node"):
+ * - as condições `{(a || b) && (<View>...)}` foram trocadas por
+ *   `{!!(a || b) && (<View>...)}` em três pontos (localização,
+ *   contactos, presença online). Quando os campos vêm do Firestore
+ *   como strings vazias ('') em vez de undefined, `'' || ''` resulta
+ *   em '' (string), e '' && (<View>) devolve '' — uma string vazia a
+ *   ser renderizada directamente como filho de <View>, o que o React
+ *   Native Web rejeita ("Unexpected text node"). O !! força o
+ *   resultado a ser sempre um boolean antes do &&.
+ *
  * Dependência nova:
  *   npx expo install expo-video
  */
@@ -52,30 +62,30 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useFocusEffect } from 'expo-router/react-navigation';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import {
-    collection,
-    doc,
-    getDoc,
-    onSnapshot,
-    query,
-    runTransaction,
-    updateDoc,
-    where,
+  collection,
+  doc,
+  getDoc,
+  onSnapshot,
+  query,
+  runTransaction,
+  updateDoc,
+  where,
 } from 'firebase/firestore';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    Dimensions,
-    FlatList,
-    Linking,
-    Modal,
-    RefreshControl,
-    ScrollView,
-    Share,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  Alert,
+  Dimensions,
+  FlatList,
+  Linking,
+  Modal,
+  RefreshControl,
+  ScrollView,
+  Share,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import PostComentariosModal from '../../components/PostComentariosModal';
@@ -733,7 +743,9 @@ export default function PerfilPublicoEmpresaScreen() {
 
         {!!dados.setor && <Text style={styles.subtitulo}>{dados.setor}</Text>}
 
-        {(dados.cidade || dados.provincia) && (
+        {/* CORRIGIDO: !!(...) força boolean — evita renderizar '' quando
+            cidade/provincia vêm como string vazia do Firestore. */}
+        {!!(dados.cidade || dados.provincia) && (
           <View style={styles.locationLine}>
             <Ionicons name="location-outline" size={15} color={C.cinza} />
             <Text style={styles.locationText}>
@@ -778,7 +790,8 @@ export default function PerfilPublicoEmpresaScreen() {
       </Secao>
 
       {/* CONTACTOS */}
-      {(dados.email || dados.telefone) && (
+      {/* CORRIGIDO: !!(...) força boolean pelo mesmo motivo acima. */}
+      {!!(dados.email || dados.telefone) && (
         <Secao titulo="Contactos">
           <Campo icon="mail-outline" label="E-mail" value={dados.email} onPress={contactarEmail} />
           <Campo icon="call-outline" label="Telefone" value={dados.telefone} onPress={contactarTelefone} />
@@ -786,7 +799,8 @@ export default function PerfilPublicoEmpresaScreen() {
       )}
 
       {/* REDES */}
-      {(dados.linkedin || dados.instagram || dados.facebook) && (
+      {/* CORRIGIDO: !!(...) força boolean pelo mesmo motivo acima. */}
+      {!!(dados.linkedin || dados.instagram || dados.facebook) && (
         <Secao titulo="Presença online">
           <Campo icon="logo-linkedin" label="LinkedIn" value={dados.linkedin} onPress={() => abrirLink(dados.linkedin)} />
           <Campo icon="logo-instagram" label="Instagram" value={dados.instagram} onPress={() => abrirLink(dados.instagram)} />

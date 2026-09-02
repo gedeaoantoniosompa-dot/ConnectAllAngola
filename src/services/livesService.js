@@ -6,6 +6,24 @@
 // "role"; quem decide broadcaster/audience é o AgoraEngine, localmente.
 //
 // Ajusta o import abaixo se config/firebase.js não estiver na raiz do projecto.
+//
+// ── ALTERAÇÕES ──
+// 1) HEARTBEAT: o anfitrião confirma "ainda estou ao vivo" a cada 20s
+//    (ver atualizarHeartbeat, chamado em broadcast.jsx). ouvirLivesAtivas
+//    passa a ignorar qualquer live cujo último heartbeat tenha mais de 60s
+//    — isto resolve o problema de lives "fantasma" que ficavam presas em
+//    status "ao_vivo" para sempre quando o anfitrião fecha a app sem
+//    terminar a transmissão de forma limpa (crash, fechar forçado, etc.).
+//    O documento em si só é marcado "terminada" quando terminarLive() é
+//    chamado com sucesso, mas mesmo que isso nunca aconteça, a live deixa
+//    de aparecer para todos assim que o heartbeat expira.
+// 2) ESTADO DE VÍDEO: novo atualizarEstadoVideo(liveId, { cameraDesligada,
+//    videoPausado }) — grava no próprio documento da live, para que tanto
+//    o anfitrião como os espectadores (via ouvirLive, em
+//    liveInteracoesService.js, que lê o mesmo documento) saibam distinguir
+//    "câmara desligada" de "vídeo em pausa".
+// 3) hostFotoURL passa a ser gravado ao criar a live, para os espectadores
+//    poderem mostrar a foto do anfitrião quando a câmara estiver desligada.
 import { app, db } from '../config/firebase';
 
 import {
@@ -25,6 +43,10 @@ import { getFunctions, httpsCallable } from 'firebase/functions';
 
 const livesRef = collection(db, 'lives');
 
+// Quanto tempo pode passar sem um heartbeat do anfitrião antes de a live
+// deixar de ser considerada "ao vivo" para quem está a ver a lista.
+const HEARTBEAT_EXPIRA_MS = 60000; // 60 segundos
+
 // Mesma fórmula usada em sala-entrevista.jsx para derivar um uid numérico
 // estável a partir do uid (string) do Firebase Auth — importante manter
 // igual, senão o mesmo utilizador entra com uids diferentes em features
@@ -39,7 +61,17 @@ export function uidNumericoDe(uid) {
 export function ouvirLivesAtivas(callback) {
   const q = query(livesRef, where('status', '==', 'ao_vivo'), orderBy('createdAt', 'desc'));
   return onSnapshot(q, (snap) => {
-    callback(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    const agora = Date.now();
+    const lives = snap.docs
+      .map((d) => ({ id: d.id, ...d.data() }))
+      .filter((live) => {
+        // Uma live sem heartbeat recente é tratada como "fantasma" — o
+        // anfitrião provavelmente fechou a app sem terminar correctamente.
+        const referencia = live.lastHeartbeat || live.createdAt;
+        if (!referencia?.toMillis) return true; // ainda a resolver no servidor: não esconder
+        return agora - referencia.toMillis() < HEARTBEAT_EXPIRA_MS;
+      });
+    callback(lives);
   });
 }
 
@@ -51,7 +83,7 @@ export function ouvirLivesAgendadas(callback) {
 }
 
 // --- Criar / agendar / terminar --------------------------------------------
-// user: { uid, nome, cargo? } — passa o que já vem de useUser()/perfil.
+// user: { uid, nome, cargo?, fotoURL? } — passa o que já vem de useUser()/perfil.
 
 export async function criarLive({ user, titulo, area, cor }) {
   if (!user?.uid) throw new Error('Precisas de ter sessão iniciada.');
@@ -60,14 +92,18 @@ export async function criarLive({ user, titulo, area, cor }) {
     hostId: user.uid,
     hostNome: user.nome || 'Utilizador',
     hostCargo: user.cargo || '',
+    hostFotoURL: user.fotoURL || null,
     titulo,
     area,
     cor,
     channelName: `live_${user.uid}_${Date.now()}`,
     status: 'ao_vivo',
     ouvintesCount: 0,
+    cameraDesligada: false,
+    videoPausado: false,
     scheduledFor: null,
     createdAt: serverTimestamp(),
+    lastHeartbeat: serverTimestamp(),
     endedAt: null,
   };
 
@@ -82,6 +118,7 @@ export async function agendarLive({ user, titulo, area, cor, scheduledFor }) {
     hostId: user.uid,
     hostNome: user.nome || 'Utilizador',
     hostCargo: user.cargo || '',
+    hostFotoURL: user.fotoURL || null,
     titulo,
     area,
     cor,
@@ -102,6 +139,31 @@ export async function terminarLive(liveId) {
     status: 'terminada',
     endedAt: serverTimestamp(),
   });
+}
+
+// --- Heartbeat (mantém a live viva enquanto o anfitrião estiver ligado) ----
+// Chamado periodicamente (ex: a cada 20s) enquanto broadcast.jsx está
+// activo. Sem heartbeat recente, ouvirLivesAtivas deixa de mostrar a live.
+export async function atualizarHeartbeat(liveId) {
+  if (!liveId) return;
+  await updateDoc(doc(db, 'lives', liveId), {
+    lastHeartbeat: serverTimestamp(),
+  }).catch(() => {});
+}
+
+// --- Estado do vídeo do anfitrião (câmara desligada / vídeo em pausa) ------
+// São dois estados distintos e propositadamente separados:
+//   cameraDesligada — o anfitrião desligou a câmara; os espectadores veem
+//                      a foto de perfil do anfitrião.
+//   videoPausado    — o anfitrião colocou o vídeo em pausa; os espectadores
+//                      veem o logótipo da ConnectAll, até ele retomar.
+export async function atualizarEstadoVideo(liveId, estado = {}) {
+  if (!liveId) return;
+  const dados = {};
+  if (typeof estado.cameraDesligada === 'boolean') dados.cameraDesligada = estado.cameraDesligada;
+  if (typeof estado.videoPausado === 'boolean') dados.videoPausado = estado.videoPausado;
+  if (Object.keys(dados).length === 0) return;
+  await updateDoc(doc(db, 'lives', liveId), dados).catch(() => {});
 }
 
 // --- Token Agora (reutiliza gerarTokenAgora já existente) ------------------

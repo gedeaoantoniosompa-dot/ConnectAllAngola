@@ -1359,7 +1359,7 @@ export default function PerfilPublicoScreen() {
         onViewableItemsChanged={onViewableItemsChanged}
       />
 
-      <Visualizador />
+      {Visualizador}
       <Modal visible={modalImagem} transparent animationType="fade" onRequestClose={() => setModalImagem(false)}>
         <View style={s.modalFundo}>
           <TouchableOpacity style={s.modalFechar} onPress={() => setModalImagem(false)}>

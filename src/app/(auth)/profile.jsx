@@ -190,6 +190,7 @@ export default function ProfileScreen() {
         try {
           const d = JSON.parse(dadosParaCarregar);
           if (d.nome)               setNome(d.nome);
+          if (d.fotoLocalUri)       setFotoLocal(d.fotoLocalUri);
           if (d.dataNasc)           setDataNasc(d.dataNasc);
           if (d.genero)             setGenero(d.genero);
           if (d.nacionalidade)      setNacionalidade(d.nacionalidade);
@@ -270,7 +271,7 @@ export default function ProfileScreen() {
   const guardarRascunho = () => {
     if (!user?.uid || passo === 0 || passo === 11 || modoEdicao) return;
     const rascunho = {
-      nome, dataNasc, genero, nacionalidade, estadoCivil,
+      nome, fotoLocalUri: fotoLocal, dataNasc, genero, nacionalidade, estadoCivil,
       telPrincipal, telAlternativo, email, provincia, municipio, endereco,
       tituloProfissional, resumo, situacaoProf, pretensaoSalarial, disponibilidade,
       formacoes, experiencias, certificacoes,
@@ -398,6 +399,20 @@ export default function ProfileScreen() {
   // 2. Envia o OTP por email (só aqui, não no register-email)
   // 3. Navega para verificar-codigo
   // A conta Firebase só é criada em verificar-codigo.jsx
+  //
+  // ── CORREÇÃO (foto de perfil perdida no registo por e-mail) ──
+  // Antes, a foto escolhida no Passo 1 (fotoLocal) nunca era incluída
+  // neste objecto — ficava só no ecrã e desaparecia assim que a conta era
+  // criada. Como aqui ainda não existe uid (a conta só nasce em
+  // verificar-codigo.jsx), ainda não é possível fazer upload para o
+  // Storage; por isso guarda-se o caminho local (fotoLocalUri) dentro do
+  // registo pendente. O ecrã verificar-codigo.jsx TEM de:
+  //   1) ler `pendente.dadosPerfil.fotoLocalUri`,
+  //   2) fazer uploadFotoPerfil(uidNovo, fotoLocalUri) assim que o uid
+  //      existir, e
+  //   3) incluir o fotoURL devolvido nos dados gravados em users/{uid}.
+  // Sem esse passo lá, a foto continua a perder-se neste fluxo — avisa se
+  // precisares de ajuda nesse ficheiro também.
   const guardarParaSenha = async () => {
     setEnviando(true);
     try {
@@ -415,7 +430,7 @@ export default function ProfileScreen() {
 
       // ── Guarda todos os dados do perfil ──
       const dadosPerfil = {
-        nome: nome.trim(), dataNasc, genero, nacionalidade, estadoCivil,
+        nome: nome.trim(), fotoLocalUri: fotoLocal || null, dataNasc, genero, nacionalidade, estadoCivil,
         telPrincipal, telAlternativo,
         email: emailParaVerificar, // usa sempre o email do registo
         provincia, municipio, endereco,
@@ -473,7 +488,15 @@ export default function ProfileScreen() {
   //
   // Neste ponto o perfil ainda não tem documentos (o passo 8 de
   // Documentos só existe no fluxo completo/edição, que acontece depois,
-  // já dentro da app) — por isso não há upload de ficheiros a fazer aqui.
+  // já dentro da app) — por isso não há upload de ficheiros a fazer aqui
+  // além, agora, da própria foto de perfil.
+  //
+  // ── CORREÇÃO (foto de perfil perdida no registo por telefone) ──
+  // Aqui já existe uid, por isso já é possível (e agora acontece) fazer
+  // upload da foto escolhida no Passo 1 para o Storage e gravar o
+  // fotoURL resultante no perfil — exactamente como já acontecia com o
+  // BI, o CV, etc. Antes desta correção, a foto ficava só no ecrã e
+  // nunca era gravada, por isso nunca aparecia no resto da app.
   const finalizarContaTelefone = async () => {
     setEnviando(true);
     try {
@@ -486,6 +509,21 @@ export default function ProfileScreen() {
 
       const pendenteStr = await AsyncStorage.getItem('_registoPendente');
       const pendente = pendenteStr ? JSON.parse(pendenteStr) : {};
+
+      // ── Foto de perfil: só faz upload se for um caminho local novo;
+      // se já não houver fotoLocal (ex: utilizador voltou atrás sem
+      // trocar), mantém o que já estiver em perfil.fotoURL. ──
+      let urlFoto = perfil?.fotoURL || null;
+      if (fotoLocal) {
+        try {
+          const u = await uploadFotoPerfil(uid, fotoLocal);
+          if (u) urlFoto = u;
+        } catch (fotoErr) {
+          console.log('[Profile finalizarContaTelefone] erro ao carregar foto:', fotoErr?.message);
+          // Não bloqueia o registo por causa da foto — o utilizador pode
+          // adicioná-la depois em "Editar perfil".
+        }
+      }
 
       // ── Carrega para o Storage qualquer documento já escolhido nesta sessão ──
       let urlBilhete = uriBilhete;
@@ -517,7 +555,7 @@ export default function ProfileScreen() {
       setUriDiploma(urlDiploma);
 
       const dadosPerfil = {
-        nome: nome.trim(), dataNasc, genero, nacionalidade, estadoCivil,
+        nome: nome.trim(), fotoURL: urlFoto, dataNasc, genero, nacionalidade, estadoCivil,
         telPrincipal: telPrincipal || pendente.telefone || '', telAlternativo,
         email, provincia, municipio, endereco,
         tituloProfissional, cargo: tituloProfissional, resumo, bio: resumo,
@@ -1229,7 +1267,7 @@ export default function ProfileScreen() {
         </View></View>
       </Modal>
 
-      <Visualizador />
+      {Visualizador}
     </SafeAreaView>
   );
 }

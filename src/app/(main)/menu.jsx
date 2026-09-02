@@ -8,12 +8,29 @@
  *   directamente o Feed da Empresa (/pagina-empresa)
  * - ao seleccionar Página da Empresa em "Trocar de conta", troca o
  *   contexto e abre directamente o Feed da Empresa
+ *
+ * ── ALTERAÇÕES ──
+ * 1) A Página da Empresa deixou de depender de existir uma conta de
+ *    Recrutador. Aparece sempre em "Trocar de conta" — criar (se ainda
+ *    não existir) ou trocar para ela (se já existir) — para QUALQUER
+ *    tipo de conta.
+ * 2) Deixou de haver qualquer Alert a dizer "ainda não existe página".
+ *    Tanto o cartão do perfil (quando o contexto é "empresa") como o
+ *    item "Página da Empresa" no modal abrem sempre directamente
+ *    /(main)/pagina-empresa — é esse ecrã que decide, sozinho, se
+ *    mostra o feed (já existe) ou o formulário de criação (ainda não
+ *    existe).
+ * 3) CORREÇÃO: a opção de voltar ao perfil PESSOAL (Utilizador ou
+ *    Recrutador, o que a conta já for) deixou de depender de existir
+ *    uma conta de Recrutador — antes disso, uma conta simples de
+ *    Utilizador que trocasse para a Página da Empresa ficava sem
+ *    forma de voltar ao seu próprio perfil. Agora essa opção aparece
+ *    SEMPRE em "Trocar de conta", seja qual for o tipo de conta.
  */
 
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { signOut } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
 import { useState } from 'react';
 import {
   Alert,
@@ -27,7 +44,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { auth, db } from '../../config/firebase';
+import { auth } from '../../config/firebase';
 import { useUser } from '../../context/UserContext';
 
 const C = {
@@ -102,77 +119,26 @@ export default function MenuScreen() {
 
   const [modalTrocarConta, setModalTrocarConta] = useState(false);
 
-  // Apenas o Recrutador adicional continua a ser procurado aqui.
-  // A Página da Empresa vem directamente do UserContext.
-  const [perfisDisponiveis, setPerfisDisponiveis] = useState({
-    recrutador: null,
-  });
+  const abrirTrocarConta = () => setModalTrocarConta(true);
 
-  const carregarPerfisDisponiveis = async () => {
-    if (!user?.uid) return;
-
-    try {
-      const snapR = await getDoc(
-        doc(db, 'users', user.uid, 'perfis', 'recrutador')
-      );
-
-      setPerfisDisponiveis({
-        recrutador: snapR.exists() ? snapR.data() : null,
-      });
-    } catch (e) {
-      console.log('Erro perfis:', e);
-    }
-  };
-
-  const abrirTrocarConta = () => {
-    setModalTrocarConta(true);
-    carregarPerfisDisponiveis();
-  };
-
-  // Voltar ao perfil pessoal/recrutador.
+  // Voltar ao perfil pessoal (Utilizador ou Recrutador — o que a conta
+  // já for). Esta opção aparece SEMPRE no modal, independentemente do
+  // tipo de conta ou de existir Página da Empresa.
   const irParaContextoPessoal = () => {
     setModalTrocarConta(false);
     trocarContexto('pessoal');
   };
 
-  // Entrar na Página da Empresa.
-  //
-  // IMPORTANTE:
-  // primeiro troca a identidade activa para "empresa";
-  // depois abre o Feed da Empresa que criámos.
-  const irParaContextoEmpresa = async () => {
+  // Página da Empresa — usado tanto para "criar" como para "trocar/entrar".
+  // Se já existir, troca primeiro o contexto activo para "empresa"; se não
+  // existir, não há nada para trocar — vai-se logo ter com o formulário de
+  // criação. Em qualquer dos casos, abre-se sempre /(main)/pagina-empresa,
+  // sem nenhum Alert a interromper o caminho.
+  const abrirPaginaEmpresa = async () => {
     setModalTrocarConta(false);
-
-    const ok = await trocarContexto('empresa');
-
-    if (!ok) {
-      Alert.alert(
-        'Página da Empresa',
-        'Ainda não existe uma Página da Empresa para trocar.'
-      );
-      return;
+    if (perfilEmpresa) {
+      await trocarContexto('empresa');
     }
-
-    router.push('/(main)/pagina-empresa');
-  };
-
-  const criarContaRecrutador = () => {
-    setModalTrocarConta(false);
-
-    router.push({
-      pathname: '/(auth)/escolher-tipo-perfil',
-      params: {
-        apenasTipo: 'recrutador',
-        modoAdicional: 'true',
-      },
-    });
-  };
-
-  const criarPaginaEmpresa = () => {
-    setModalTrocarConta(false);
-
-    // O próprio ecrã mostra o formulário de criação
-    // quando a Página da Empresa ainda não existe.
     router.push('/(main)/pagina-empresa');
   };
 
@@ -214,29 +180,11 @@ export default function MenuScreen() {
       ? 'Página da Empresa'
       : subtituloTipo;
 
-  const recrutadorAtivo = tipoPerfil === 'recrutador';
-
-  const recrutadorExiste =
-    recrutadorAtivo || !!perfisDisponiveis.recrutador;
-
-  const dadosRecrutador =
-    perfisDisponiveis.recrutador ||
-    (recrutadorAtivo ? perfil : null);
-
-  // NOVO:
   // O cartão principal do Menu respeita o contexto.
-  // Empresa -> Feed da Empresa
+  // Empresa -> ecrã da Empresa (que trata sozinho de criar ou mostrar)
   // Pessoal -> Perfil pessoal
   const abrirPerfilAtivo = () => {
     if (contextoAtivo === 'empresa') {
-      if (!perfilEmpresa) {
-        Alert.alert(
-          'Página da Empresa',
-          'A Página da Empresa ainda não está disponível.'
-        );
-        return;
-      }
-
       router.push('/(main)/pagina-empresa');
       return;
     }
@@ -271,8 +219,9 @@ export default function MenuScreen() {
         {/* =========================================================
             CARTÃO DO PERFIL / PÁGINA ACTIVA
             =========================================================
-            Se estiver em empresa, este cartão abre o Feed da Empresa.
-            Se estiver em pessoal, continua a abrir my-profile.
+            Se estiver em empresa, este cartão abre pagina-empresa.jsx
+            (que mostra o feed se já existir, ou o formulário de criação
+            se ainda não existir). Se estiver em pessoal, abre my-profile.
         */}
         <TouchableOpacity
           style={s.cardPerfil}
@@ -319,7 +268,7 @@ export default function MenuScreen() {
               ]}
             >
               <Ionicons
-                name="briefcase"
+                name="person"
                 size={14}
                 color={C.branco}
               />
@@ -560,7 +509,13 @@ export default function MenuScreen() {
 
       {/* =========================================================
           MODAL — TROCAR DE CONTA
-          ========================================================= */}
+          =========================================================
+          - Perfil Pessoal (Utilizador ou Recrutador): aparece SEMPRE,
+            para qualquer tipo de conta — é a forma de voltar da
+            Página da Empresa para o próprio perfil.
+          - Página da Empresa: aparece SEMPRE — trocar/entrar (se já
+            existir) ou criar (se ainda não existir).
+      */}
       <Modal
         visible={modalTrocarConta}
         transparent
@@ -586,33 +541,64 @@ export default function MenuScreen() {
               Trocar de conta
             </Text>
 
-            {/* RECRUTADOR */}
-            {recrutadorExiste ? (
+            {/* PERFIL PESSOAL — aparece sempre */}
+            <TouchableOpacity
+              style={s.modalContaItem}
+              onPress={irParaContextoPessoal}
+            >
+              <Avatar
+                uri={perfil?.fotoURL}
+                nome={perfil?.nome || subtituloTipo}
+                size={44}
+              />
+
+              <View style={{ flex: 1 }}>
+                <Text style={s.modalContaNome}>
+                  {perfil?.nome || 'O meu perfil'}
+                </Text>
+
+                <Text style={s.modalContaTipo}>
+                  {subtituloTipo}
+                </Text>
+              </View>
+
+              {contextoAtivo === 'pessoal' && (
+                <View style={s.modalContaActivaBadge}>
+                  <Text style={s.modalContaActivaTxt}>
+                    Activa
+                  </Text>
+                </View>
+              )}
+            </TouchableOpacity>
+
+            {/* PÁGINA DA EMPRESA — sempre disponível, para qualquer conta.
+                Existe ou não, o toque abre sempre pagina-empresa.jsx. */}
+            {perfilEmpresa ? (
               <TouchableOpacity
                 style={s.modalContaItem}
-                onPress={irParaContextoPessoal}
+                onPress={abrirPaginaEmpresa}
               >
                 <Avatar
-                  uri={dadosRecrutador?.fotoURL}
+                  uri={perfilEmpresa.logoURL}
                   nome={
-                    dadosRecrutador?.nome ||
-                    'Recrutador'
+                    perfilEmpresa.nomeEmpresa ||
+                    'Empresa'
                   }
                   size={44}
                 />
 
                 <View style={{ flex: 1 }}>
                   <Text style={s.modalContaNome}>
-                    {dadosRecrutador?.nome ||
-                      'Perfil Recrutador'}
+                    {perfilEmpresa.nomeEmpresa ||
+                      'Página da Empresa'}
                   </Text>
 
                   <Text style={s.modalContaTipo}>
-                    Recrutador
+                    Página da Empresa · Feed
                   </Text>
                 </View>
 
-                {contextoAtivo === 'pessoal' && (
+                {contextoAtivo === 'empresa' && (
                   <View
                     style={
                       s.modalContaActivaBadge
@@ -631,23 +617,26 @@ export default function MenuScreen() {
             ) : (
               <TouchableOpacity
                 style={s.modalCriarItem}
-                onPress={criarContaRecrutador}
+                onPress={abrirPaginaEmpresa}
               >
                 <View
                   style={[
                     s.modalCriarIconeWrap,
-                    { backgroundColor: '#F3EEFF' },
+                    {
+                      backgroundColor:
+                        '#FEE7F0',
+                    },
                   ]}
                 >
                   <Ionicons
-                    name="briefcase-outline"
+                    name="business-outline"
                     size={20}
-                    color={C.roxo}
+                    color={C.rosa}
                   />
                 </View>
 
                 <Text style={s.modalCriarTxt}>
-                  Criar conta de Recrutador
+                  Criar Página da Empresa
                 </Text>
 
                 <Feather
@@ -656,83 +645,6 @@ export default function MenuScreen() {
                   color={C.cinza3}
                 />
               </TouchableOpacity>
-            )}
-
-            {/* PÁGINA DA EMPRESA */}
-            {recrutadorExiste && (
-              perfilEmpresa ? (
-                <TouchableOpacity
-                  style={s.modalContaItem}
-                  onPress={irParaContextoEmpresa}
-                >
-                  <Avatar
-                    uri={perfilEmpresa.logoURL}
-                    nome={
-                      perfilEmpresa.nomeEmpresa ||
-                      'Empresa'
-                    }
-                    size={44}
-                  />
-
-                  <View style={{ flex: 1 }}>
-                    <Text style={s.modalContaNome}>
-                      {perfilEmpresa.nomeEmpresa ||
-                        'Página da Empresa'}
-                    </Text>
-
-                    <Text style={s.modalContaTipo}>
-                      Página da Empresa · Feed
-                    </Text>
-                  </View>
-
-                  {contextoAtivo === 'empresa' && (
-                    <View
-                      style={
-                        s.modalContaActivaBadge
-                      }
-                    >
-                      <Text
-                        style={
-                          s.modalContaActivaTxt
-                        }
-                      >
-                        Activa
-                      </Text>
-                    </View>
-                  )}
-                </TouchableOpacity>
-              ) : (
-                <TouchableOpacity
-                  style={s.modalCriarItem}
-                  onPress={criarPaginaEmpresa}
-                >
-                  <View
-                    style={[
-                      s.modalCriarIconeWrap,
-                      {
-                        backgroundColor:
-                          '#FEE7F0',
-                      },
-                    ]}
-                  >
-                    <Ionicons
-                      name="business-outline"
-                      size={20}
-                      color={C.rosa}
-                    />
-                  </View>
-
-                  <Text style={s.modalCriarTxt}>
-                    Criar Página da Empresa
-                  </Text>
-
-                  <Feather
-                    name="plus"
-                    size={18}
-                    color={C.cinza3}
-                  />
-                </TouchableOpacity>
-              )
             )}
 
             <TouchableOpacity

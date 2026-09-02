@@ -5,11 +5,24 @@
 // as Entrevistas. Inclui as interações sociais estilo TikTok LIVE:
 // comentários em tempo real, gestão de pedidos para subir ao palco, palco
 // de co-apresentadores e contagem de gostos.
+//
+// ── ALTERAÇÕES ──
+// 1) HEARTBEAT: enquanto a transmissão estiver "pronta", envia um sinal a
+//    cada 20s (atualizarHeartbeat) para o Firestore — é isto que permite a
+//    live.jsx/livesService.js detectarem lives "fantasma" (anfitrião que
+//    fechou a app sem terminar correctamente) e deixarem de as mostrar.
+// 2) CÂMARA DESLIGADA: quando o anfitrião desliga a câmara, o seu próprio
+//    ecrã (e o dos espectadores, via cameraDesligada no documento da live)
+//    passa a mostrar a foto de perfil do anfitrião, em vez de ecrã preto.
+// 3) NOVO: botão "Pausar vídeo", distinto de desligar a câmara — quando
+//    activo, mostra o logótipo da ConnectAll em círculo, tanto para o
+//    anfitrião como para os espectadores (videoPausado no documento),
+//    até ele retomar.
 
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import FloatingHearts from '../../components/live/FloatingHearts';
 import LiveComments from '../../components/live/LiveComments';
@@ -27,7 +40,21 @@ import {
   removerDoPalco,
   responderPedido,
 } from '../../services/liveInteracoesService';
-import { criarLive, obterTokenAgora, terminarLive, uidNumericoDe } from '../../services/livesService';
+import {
+  atualizarEstadoVideo,
+  atualizarHeartbeat,
+  criarLive,
+  obterTokenAgora,
+  terminarLive,
+  uidNumericoDe,
+} from '../../services/livesService';
+
+// Caminho corrigido: o ficheiro está em src/app/(main)/broadcast.jsx e o
+// assets/ vive na raiz do projecto (fora de src/) — por isso são precisos
+// 3 níveis (../../../), não 2.
+const LOGO_CONNECTALL = require('../../../assets/icon-app.png');
+
+const HEARTBEAT_INTERVALO_MS = 20000; // 20s — bem dentro dos 60s de expiração
 
 export default function BroadcastScreen() {
   const router = useRouter();
@@ -39,6 +66,7 @@ export default function BroadcastScreen() {
   const [pronto, setPronto] = useState(false);
   const [microfoneAtivo, setMicrofoneAtivo] = useState(true);
   const [cameraAtiva, setCameraAtiva] = useState(true);
+  const [videoPausado, setVideoPausado] = useState(false);
   const [erro, setErro] = useState(null);
 
   const [liveInfo, setLiveInfo] = useState(null);
@@ -70,7 +98,12 @@ export default function BroadcastScreen() {
 
       try {
         const live = await criarLive({
-          user: { uid: user?.uid, nome: perfil?.nome, cargo: perfil?.cargo },
+          user: {
+            uid: user?.uid,
+            nome: perfil?.nome,
+            cargo: perfil?.cargo,
+            fotoURL: perfil?.fotoURL,
+          },
           titulo,
           area,
           cor: cor || '#1677F2',
@@ -123,6 +156,20 @@ export default function BroadcastScreen() {
     };
   }, [titulo, area, cor]);
 
+  // --- Heartbeat: mantém a live "viva" enquanto esta tela estiver activa ----
+  // Sem isto, se a app for fechada de forma brusca (crash, forçar fechar)
+  // sem passar pelo botão "Terminar", a live ficava presa em "ao_vivo" para
+  // sempre. Com o heartbeat, ela deixa de aparecer para todos assim que
+  // passarem 60s sem confirmação — mesmo que este cleanup nunca chegue a
+  // correr.
+  useEffect(() => {
+    if (!pronto || !liveIdRef.current) return;
+    const intervalo = setInterval(() => {
+      atualizarHeartbeat(liveIdRef.current);
+    }, HEARTBEAT_INTERVALO_MS);
+    return () => clearInterval(intervalo);
+  }, [pronto]);
+
   // --- Dados sociais em tempo real: live, palco, pedidos pendentes -----------
   useEffect(() => {
     if (!pronto || !liveIdRef.current) return;
@@ -148,14 +195,38 @@ export default function BroadcastScreen() {
     setMicrofoneAtivo((v) => !v);
   }
 
+  // Câmara desligada: pára o envio de vídeo E avisa (via Firestore) para
+  // mostrar a foto de perfil em vez de ecrã preto, tanto aqui como nos
+  // espectadores.
   function alternarCamera() {
-    if (cameraAtiva) {
-      AgoraEngine.disableVideo();
+    const vaiFicarAtiva = !cameraAtiva;
+    if (vaiFicarAtiva) {
+      AgoraEngine.enableVideo();
+      AgoraEngine.startPreview();
     } else {
+      AgoraEngine.disableVideo();
+    }
+    setCameraAtiva(vaiFicarAtiva);
+    if (liveIdRef.current) {
+      atualizarEstadoVideo(liveIdRef.current, { cameraDesligada: !vaiFicarAtiva });
+    }
+  }
+
+  // Pausar vídeo: diferente de desligar a câmara — mostra o logótipo da
+  // ConnectAll (em vez da foto de perfil) até ser retomado. Se a câmara já
+  // estava desligada antes de pausar, ao despausar não a volta a ligar.
+  function alternarPausa() {
+    const vaiPausar = !videoPausado;
+    if (vaiPausar) {
+      AgoraEngine.disableVideo();
+    } else if (cameraAtiva) {
       AgoraEngine.enableVideo();
       AgoraEngine.startPreview();
     }
-    setCameraAtiva((v) => !v);
+    setVideoPausado(vaiPausar);
+    if (liveIdRef.current) {
+      atualizarEstadoVideo(liveIdRef.current, { videoPausado: vaiPausar });
+    }
   }
 
   function responderAoPedido(pedido, aceite) {
@@ -177,13 +248,39 @@ export default function BroadcastScreen() {
     );
   }
 
+  const mostrarVideo = pronto && cameraAtiva && !videoPausado;
+  const mostrarCameraDesligada = pronto && !videoPausado && !cameraAtiva;
+  const mostrarPausado = pronto && videoPausado;
+
   return (
     <View style={styles.container}>
-      {pronto && (
+      {mostrarVideo && (
         <RtcSurfaceView
           style={StyleSheet.absoluteFill}
           canvas={{ uid: 0, sourceType: VideoSourceType.VideoSourceCamera }}
         />
+      )}
+
+      {mostrarPausado && (
+        <View style={styles.overlayCentro}>
+          <View style={styles.logoCirculo}>
+            <Image source={LOGO_CONNECTALL} style={styles.logoImg} resizeMode="contain" />
+          </View>
+          <Text style={styles.overlayTexto}>Vídeo em pausa</Text>
+        </View>
+      )}
+
+      {mostrarCameraDesligada && (
+        <View style={styles.overlayCentro}>
+          {perfil?.fotoURL ? (
+            <Image source={{ uri: perfil.fotoURL }} style={styles.avatarCirculo} />
+          ) : (
+            <View style={[styles.avatarCirculo, styles.avatarFallback]}>
+              <Text style={styles.avatarFallbackTxt}>{(perfil?.nome || 'U')[0]}</Text>
+            </View>
+          )}
+          <Text style={styles.overlayTexto}>Câmara desligada</Text>
+        </View>
       )}
 
       <LiveStageStrip convidados={palco} souHost onRemover={removerConvidado} />
@@ -229,6 +326,12 @@ export default function BroadcastScreen() {
           <TouchableOpacity style={styles.controlBtn} onPress={alternarCamera}>
             <Ionicons name={cameraAtiva ? 'videocam' : 'videocam-off'} size={22} color="#fff" />
           </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.controlBtn, videoPausado && styles.controlBtnActivo]}
+            onPress={alternarPausa}
+          >
+            <Ionicons name={videoPausado ? 'play' : 'pause'} size={22} color="#fff" />
+          </TouchableOpacity>
           <TouchableOpacity style={styles.controlBtn} onPress={() => AgoraEngine.switchCamera()}>
             <Ionicons name="camera-reverse-outline" size={22} color="#fff" />
           </TouchableOpacity>
@@ -252,7 +355,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
   safeErro: { flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center', gap: 16, padding: 24 },
   erroText: { color: '#fff', fontSize: 15, textAlign: 'center' },
-  erroBtn: { backgroundColor: '#EC4C89', borderRadius: 20, paddingHorizontal: 20, paddingVertical: 10 },
+  erroBtn: { backgroundColor: '#0A66C2', borderRadius: 20, paddingHorizontal: 20, paddingVertical: 10 },
   erroBtnText: { color: '#fff', fontWeight: '700' },
   overlay: { flex: 1, justifyContent: 'space-between' },
   topBar: { flexDirection: 'row', alignItems: 'center', padding: 16 },
@@ -265,7 +368,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 4,
   },
-  liveDotWhite: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#EC4C89' },
+  liveDotWhite: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#E00000' },
   liveAoVivoText: { fontSize: 11, fontWeight: '800', color: '#fff' },
   pedidosBtn: {
     flexDirection: 'row',
@@ -281,7 +384,7 @@ const styles = StyleSheet.create({
     minWidth: 18,
     height: 18,
     borderRadius: 9,
-    backgroundColor: '#EC4C89',
+    backgroundColor: '#0A66C2',
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 4,
@@ -292,7 +395,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 16,
+    gap: 14,
     paddingBottom: 30,
   },
   controlBtn: {
@@ -303,6 +406,42 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  terminarBtn: { backgroundColor: '#EC4C89', borderRadius: 24, paddingHorizontal: 20, paddingVertical: 12 },
+  controlBtnActivo: {
+    backgroundColor: 'rgba(10,102,194,0.85)',
+  },
+  terminarBtn: { backgroundColor: '#E00000', borderRadius: 24, paddingHorizontal: 20, paddingVertical: 12 },
   terminarBtnText: { color: '#fff', fontWeight: '800' },
+
+  // ── Sobreposições: vídeo em pausa / câmara desligada ──
+  overlayCentro: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#000',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+  },
+  logoCirculo: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 16,
+  },
+  logoImg: { width: '100%', height: '100%' },
+  avatarCirculo: {
+    width: 112,
+    height: 112,
+    borderRadius: 56,
+    borderWidth: 3,
+    borderColor: 'rgba(255,255,255,0.25)',
+  },
+  avatarFallback: {
+    backgroundColor: '#334155',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarFallbackTxt: { color: '#fff', fontSize: 42, fontWeight: '800' },
+  overlayTexto: { color: 'rgba(255,255,255,0.7)', fontSize: 13, fontWeight: '600' },
 });
