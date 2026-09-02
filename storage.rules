@@ -1,0 +1,31 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function estaAutenticado() {
+      return request.auth != null;
+    }
+
+    function eAdmin() {
+      return estaAutenticado() &&
+        firestore.exists(/databases/(default)/documents/users/$(request.auth.uid)) &&
+        firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // Recursos exclusivos do painel administrativo.
+    match /banners/{allPaths=**} {
+      allow read: if true;
+      allow write: if eAdmin();
+    }
+
+    match /sons/{allPaths=**} {
+      allow read: if true;
+      allow write: if eAdmin();
+    }
+
+    // Restante do Storage: mantém o comportamento autenticado da aplicação.
+    // Paths administrativos acima ficam sempre sujeitos a eAdmin().
+    match /{allPaths=**} {
+      allow read, write: if estaAutenticado();
+    }
+  }
+}
