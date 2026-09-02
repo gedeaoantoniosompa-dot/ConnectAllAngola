@@ -17,9 +17,10 @@ service cloud.firestore {
     }
 
     // ── Configurações de sons ──
+    // Apenas administradores podem alterar sons do sistema.
     match /configuracoes/sons {
       allow read: if true;
-      allow write: if estaAutenticado();
+      allow write: if eAdmin();
     }
 
     // ── Utilizadores ──
@@ -38,7 +39,6 @@ service cloud.firestore {
         allow write: if eDono(userId) || eAdmin();
       }
     }
-
 
     match /usuarios/{userId} {
       allow read: if estaAutenticado();
@@ -168,6 +168,13 @@ service cloud.firestore {
       allow read, write: if eAdmin();
     }
 
+    // ── Auditoria administrativa ──
+    // O painel não escreve diretamente; somente Cloud Functions (Admin SDK).
+    match /admin_audit_logs/{logId} {
+      allow read: if eAdmin();
+      allow create, update, delete: if false;
+    }
+
     // ── Mensagens ──
     match /messages/{msgId} {
       allow read, write: if estaAutenticado();
@@ -183,15 +190,12 @@ service cloud.firestore {
     }
 
     // ── Redefinições de senha (trigger de desbloqueio) ──
-    // O cliente escreve aqui após login bem-sucedido com nova senha.
-    // Só o próprio utilizador pode escrever; a Cloud Function lê via Admin SDK.
     match /redefinicoesSenha/{uid} {
       allow read: if false;
       allow write: if eDono(uid);
     }
 
     // ── Tentativas de login — BLOQUEADO ao cliente ──
-    // Só as Cloud Functions acedem via Admin SDK (ignora estas regras).
     match /tentativasLogin/{email} {
       allow read, write: if false;
     }
@@ -199,7 +203,7 @@ service cloud.firestore {
     // ── Pedidos de recuperação de conta ──
     match /pedidosRecuperacao/{pedidoId} {
       allow read: if eAdmin();
-      allow create: if true; // utilizador pode submeter mesmo sem sessão
+      allow create: if true;
       allow update, delete: if eAdmin();
     }
   }
