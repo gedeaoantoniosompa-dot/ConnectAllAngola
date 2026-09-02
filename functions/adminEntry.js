@@ -1,8 +1,7 @@
 // Firebase Functions entrypoint.
-// Load the existing function exports first (this also initializes firebase-admin),
-// then expose the protected admin gateway without modifying the original index.js.
+// Keep all existing exports and add the protected administrative gateway.
 const existing = require('./index');
-const { adminOperation } = require('./adminOperations');
+const { adminOperation } = require('./adminGateway');
 
 module.exports = {
   ...existing,
