@@ -12,6 +12,7 @@ import {
   orderBy,
   query,
   runTransaction,
+  serverTimestamp,
   setDoc,
   updateDoc,
   where,
@@ -517,6 +518,28 @@ export default function PerfilPublicoScreen() {
     };
     carregar();
   }, [uid]);
+
+  // ── NOVO: regista esta visita para o dono do perfil poder ver quem o
+  // visitou em "Análise → Visualizações do perfil" (my-profile.jsx).
+  // Só regista quando o perfil carregou com sucesso e quem está a ver
+  // NÃO é o próprio dono. Usa merge (setDoc com merge:true) — por isso a
+  // mesma pessoa nunca fica duplicada na lista, só actualiza a data da
+  // última visita. Sem isto, a lista de "quem viu o meu perfil" nunca
+  // teria dados nenhuns.
+  useEffect(() => {
+    if (!perfil || !uid || !user?.uid || eProprio) return;
+    setDoc(
+      doc(db, 'users', uid, 'visualizacoesPerfil', user.uid),
+      {
+        uid: user.uid,
+        nome: meuPerfil?.nome || 'Utilizador',
+        fotoURL: meuPerfil?.fotoURL || null,
+        cargo: meuPerfil?.tituloProfissional || meuPerfil?.cargo || '',
+        visitadoEm: serverTimestamp(),
+      },
+      { merge: true }
+    ).catch(() => {});
+  }, [perfil, uid, user?.uid, eProprio]);
 
   useEffect(() => {
     if (!uid) return;

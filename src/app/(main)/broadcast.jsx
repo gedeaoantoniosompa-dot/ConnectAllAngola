@@ -22,7 +22,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Animated, Image, Keyboard, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import FloatingHearts from '../../components/live/FloatingHearts';
 import LiveComments from '../../components/live/LiveComments';
@@ -68,6 +68,44 @@ export default function BroadcastScreen() {
   const [cameraAtiva, setCameraAtiva] = useState(true);
   const [videoPausado, setVideoPausado] = useState(false);
   const [erro, setErro] = useState(null);
+
+  // ── Altura do teclado, aplicada manualmente ──
+  // NÃO usamos KeyboardAvoidingView aqui: este ecrã tem uma view nativa de
+  // vídeo (RtcSurfaceView) a ocupar o ecrã todo por baixo, e views nativas
+  // deste tipo (câmara/vídeo) frequentemente não participam bem na
+  // remedição de layout que o KeyboardAvoidingView precisa fazer — o
+  // resultado era o ajuste não ter efeito nenhum no telemóvel. Ouvir os
+  // eventos do teclado directamente e animar um simples paddingBottom na
+  // zona de comentários/botões (que não tem nenhuma view nativa dentro)
+  // é a técnica que as apps de live streaming realmente usam, e não
+  // depende de remedir nada relacionado com o vídeo.
+  const tecladoAltura = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const eventoMostrar = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const eventoEsconder = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const subMostrar = Keyboard.addListener(eventoMostrar, (e) => {
+      Animated.timing(tecladoAltura, {
+        toValue: e.endCoordinates?.height || 0,
+        duration: e.duration || 220,
+        useNativeDriver: false, // paddingBottom não suporta o native driver
+      }).start();
+    });
+
+    const subEsconder = Keyboard.addListener(eventoEsconder, (e) => {
+      Animated.timing(tecladoAltura, {
+        toValue: 0,
+        duration: e?.duration || 220,
+        useNativeDriver: false,
+      }).start();
+    });
+
+    return () => {
+      subMostrar.remove();
+      subEsconder.remove();
+    };
+  }, []);
 
   const [liveInfo, setLiveInfo] = useState(null);
   const [palco, setPalco] = useState([]);
@@ -115,8 +153,8 @@ export default function BroadcastScreen() {
         if (cancelado) return;
 
         AgoraEngine.init();
-        AgoraEngine.enableAudio();
-        AgoraEngine.enableVideo();
+        await AgoraEngine.enableAudio();
+        await AgoraEngine.enableVideo();
 
         AgoraEngine.registarHandlers({
           onError: (code) => setErro(`Erro Agora (${code}).`),
@@ -248,13 +286,20 @@ export default function BroadcastScreen() {
     );
   }
 
-  const mostrarVideo = pronto && cameraAtiva && !videoPausado;
-  const mostrarCameraDesligada = pronto && !videoPausado && !cameraAtiva;
+  // NOTA: o RtcSurfaceView fica SEMPRE montado enquanto "pronto" for true —
+  // nunca desmontado/remontado ao ligar/desligar câmara ou pausar. Antes,
+  // condicionar a montagem a "mostrarVideo" fazia o vídeo por vezes não
+  // voltar a aparecer correctamente ao ligar a câmara de novo ou ao
+  // despausar (o RtcSurfaceView é uma view nativa do Agora — remontá-la
+  // pode perder a ligação à textura de vídeo). Em vez disso, o que muda é
+  // só o que fica POR CIMA: um overlay opaco (foto ou logótipo) que tapa
+  // completamente o vídeo sem nunca desmontar a view por baixo.
   const mostrarPausado = pronto && videoPausado;
+  const mostrarCameraDesligada = pronto && !videoPausado && !cameraAtiva;
 
   return (
     <View style={styles.container}>
-      {mostrarVideo && (
+      {pronto && (
         <RtcSurfaceView
           style={StyleSheet.absoluteFill}
           canvas={{ uid: 0, sourceType: VideoSourceType.VideoSourceCamera }}
@@ -287,6 +332,12 @@ export default function BroadcastScreen() {
 
       <FloatingHearts contagem={liveInfo?.gostosCount} corDestaque="#EC4C89" />
 
+      {/* IMPORTANTE: o topBar fica FORA do KeyboardAvoidingView (tal como
+          o cabeçalho em conversa.jsx) — só o que está por baixo dele
+          (comentários + botões) precisa de subir com o teclado. behavior
+          "height" no Android (com keyboardVerticalOffset) é a mesma regra
+          já comprovada em conversa.jsx; "undefined" tinha deixado o
+          teclado sem qualquer efeito no Android. */}
       <SafeAreaView style={styles.overlay}>
         <View style={styles.topBar}>
           <View style={styles.liveAoVivoBadge}>
@@ -307,38 +358,40 @@ export default function BroadcastScreen() {
           </TouchableOpacity>
         </View>
 
-        <View style={styles.meioArea}>
-          <View style={{ flex: 1 }}>
-            {pronto && liveIdRef.current && (
-              <LiveComments
-                liveId={liveIdRef.current}
-                user={{ uid: user?.uid, nome: perfil?.nome }}
-                corDestaque={cor || '#1677F2'}
-              />
-            )}
+        <Animated.View style={{ flex: 1, paddingBottom: tecladoAltura }}>
+          <View style={styles.meioArea}>
+            <View style={{ flex: 1 }}>
+              {pronto && liveIdRef.current && (
+                <LiveComments
+                  liveId={liveIdRef.current}
+                  user={{ uid: user?.uid, nome: perfil?.nome }}
+                  corDestaque={cor || '#1677F2'}
+                />
+              )}
+            </View>
           </View>
-        </View>
 
-        <View style={styles.bottomBar}>
-          <TouchableOpacity style={styles.controlBtn} onPress={alternarMicrofone}>
-            <Ionicons name={microfoneAtivo ? 'mic' : 'mic-off'} size={22} color="#fff" />
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.controlBtn} onPress={alternarCamera}>
-            <Ionicons name={cameraAtiva ? 'videocam' : 'videocam-off'} size={22} color="#fff" />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.controlBtn, videoPausado && styles.controlBtnActivo]}
-            onPress={alternarPausa}
-          >
-            <Ionicons name={videoPausado ? 'play' : 'pause'} size={22} color="#fff" />
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.controlBtn} onPress={() => AgoraEngine.switchCamera()}>
-            <Ionicons name="camera-reverse-outline" size={22} color="#fff" />
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.terminarBtn} onPress={terminar}>
-            <Text style={styles.terminarBtnText}>Terminar</Text>
-          </TouchableOpacity>
-        </View>
+          <View style={styles.bottomBar}>
+            <TouchableOpacity style={styles.controlBtn} onPress={alternarMicrofone}>
+              <Ionicons name={microfoneAtivo ? 'mic' : 'mic-off'} size={22} color="#fff" />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.controlBtn} onPress={alternarCamera}>
+              <Ionicons name={cameraAtiva ? 'videocam' : 'videocam-off'} size={22} color="#fff" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.controlBtn, videoPausado && styles.controlBtnActivo]}
+              onPress={alternarPausa}
+            >
+              <Ionicons name={videoPausado ? 'play' : 'pause'} size={22} color="#fff" />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.controlBtn} onPress={() => AgoraEngine.switchCamera()}>
+              <Ionicons name="camera-reverse-outline" size={22} color="#fff" />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.terminarBtn} onPress={terminar}>
+              <Text style={styles.terminarBtnText}>Terminar</Text>
+            </TouchableOpacity>
+          </View>
+        </Animated.View>
       </SafeAreaView>
 
       <LiveRequestsSheet

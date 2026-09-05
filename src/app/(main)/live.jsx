@@ -85,6 +85,7 @@ export default function LiveScreen() {
 
   // ── Partilhar ──
   const [liveAPartilhar, setLiveAPartilhar] = useState(null);
+  const [comentarioPartilha, setComentarioPartilha] = useState('');
   const [aPartilharNoFeed, setAPartilharNoFeed] = useState(false);
 
   useEffect(() => {
@@ -146,14 +147,17 @@ export default function LiveScreen() {
 
   // ── Partilhar: com amigos (partilha nativa) ou no Feed da ConnectAll ──
   function abrirPartilha(live) {
+    setComentarioPartilha('');
     setLiveAPartilhar(live);
   }
 
   async function partilharComAmigos(live) {
+    const comentario = comentarioPartilha.trim();
     setLiveAPartilhar(null);
+    setComentarioPartilha('');
     try {
       await Share.share({
-        message: `${live.hostNome || 'Alguém'} está ao vivo agora na ConnectAll Angola: "${live.titulo}". Vem assistir!`,
+        message: `${comentario ? comentario + '\n\n' : ''}${live.hostNome || 'Alguém'} está ao vivo agora na ConnectAll Angola: "${live.titulo}". Vem assistir!`,
       });
     } catch (e) {
       // utilizador cancelou a partilha — nada a fazer
@@ -166,6 +170,7 @@ export default function LiveScreen() {
       Alert.alert('Sessão necessária', 'Inicia sessão para partilhares no Feed.');
       return;
     }
+    const comentario = comentarioPartilha.trim();
     setAPartilharNoFeed(true);
     try {
       await addDoc(collection(db, 'posts'), {
@@ -173,7 +178,12 @@ export default function LiveScreen() {
         autorNome: perfil?.nome || 'Utilizador',
         autorFoto: perfil?.fotoURL || null,
         autorCargo: perfil?.area || perfil?.cargo || '',
-        texto: `🔴 A assistir agora: "${live.titulo}", com ${live.hostNome || 'um convidado'}. Vem juntar-te!`,
+        // O comentário escrito pelo utilizador acompanha sempre a live,
+        // antes da frase automática — só a frase automática é omitida se
+        // o utilizador já tiver escrito algo suficientemente descritivo.
+        texto: comentario
+          ? `${comentario}\n\n🔴 A assistir agora: "${live.titulo}", com ${live.hostNome || 'um convidado'}.`
+          : `🔴 A assistir agora: "${live.titulo}", com ${live.hostNome || 'um convidado'}. Vem juntar-te!`,
         tipo: 'artigo',
         mediaUrls: [],
         // Campos extra que o Feed usa para saber que este post é uma live:
@@ -191,6 +201,7 @@ export default function LiveScreen() {
         timestamp: serverTimestamp(),
       });
       setLiveAPartilhar(null);
+      setComentarioPartilha('');
       Alert.alert('Partilhado', 'A live foi partilhada no teu Feed.');
     } catch (e) {
       Alert.alert('Erro', 'Não foi possível partilhar no Feed. Tenta novamente.');
@@ -429,46 +440,62 @@ export default function LiveScreen() {
         animationType="fade"
         onRequestClose={() => setLiveAPartilhar(null)}
       >
-        <TouchableOpacity
-          style={styles.shareOverlay}
-          activeOpacity={1}
-          onPress={() => setLiveAPartilhar(null)}
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : -50}
         >
-          <View style={styles.shareSheet} onStartShouldSetResponder={() => true}>
-            <View style={styles.shareHandle} />
-            <Text style={styles.shareTitle}>Partilhar live</Text>
-            {!!liveAPartilhar && (
-              <Text style={styles.shareSubtitle} numberOfLines={1}>{liveAPartilhar.titulo}</Text>
-            )}
+          <TouchableOpacity
+            style={styles.shareOverlay}
+            activeOpacity={1}
+            onPress={() => setLiveAPartilhar(null)}
+          >
+            <View style={styles.shareSheet} onStartShouldSetResponder={() => true}>
+              <View style={styles.shareHandle} />
+              <Text style={styles.shareTitle}>Partilhar live</Text>
+              {!!liveAPartilhar && (
+                <Text style={styles.shareSubtitle} numberOfLines={1}>{liveAPartilhar.titulo}</Text>
+              )}
 
-            <TouchableOpacity
-              style={styles.shareRow}
-              onPress={() => partilharComAmigos(liveAPartilhar)}
-            >
-              <View style={styles.shareIconWrap}>
-                <Feather name="send" size={18} color={C.azul} />
-              </View>
-              <Text style={styles.shareRowText}>Partilhar com amigos</Text>
-            </TouchableOpacity>
+              <TextInput
+                style={styles.shareComentarioInput}
+                placeholder="Escreve um comentário (opcional)..."
+                placeholderTextColor={C.cinza3}
+                value={comentarioPartilha}
+                onChangeText={setComentarioPartilha}
+                multiline
+                maxLength={200}
+              />
 
-            <TouchableOpacity
-              style={styles.shareRow}
-              onPress={() => partilharNoFeed(liveAPartilhar)}
-              disabled={aPartilharNoFeed}
-            >
-              <View style={styles.shareIconWrap}>
-                {aPartilharNoFeed
-                  ? <ActivityIndicator size="small" color={C.azul} />
-                  : <Ionicons name="albums-outline" size={18} color={C.azul} />}
-              </View>
-              <Text style={styles.shareRowText}>Partilhar no Feed</Text>
-            </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.shareRow}
+                onPress={() => partilharComAmigos(liveAPartilhar)}
+              >
+                <View style={styles.shareIconWrap}>
+                  <Feather name="send" size={18} color={C.azul} />
+                </View>
+                <Text style={styles.shareRowText}>Partilhar com amigos</Text>
+              </TouchableOpacity>
 
-            <TouchableOpacity style={styles.shareCancelar} onPress={() => setLiveAPartilhar(null)}>
-              <Text style={styles.shareCancelarText}>Cancelar</Text>
-            </TouchableOpacity>
-          </View>
-        </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.shareRow}
+                onPress={() => partilharNoFeed(liveAPartilhar)}
+                disabled={aPartilharNoFeed}
+              >
+                <View style={styles.shareIconWrap}>
+                  {aPartilharNoFeed
+                    ? <ActivityIndicator size="small" color={C.azul} />
+                    : <Ionicons name="albums-outline" size={18} color={C.azul} />}
+                </View>
+                <Text style={styles.shareRowText}>Partilhar no Feed</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.shareCancelar} onPress={() => setLiveAPartilhar(null)}>
+                <Text style={styles.shareCancelarText}>Cancelar</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </KeyboardAvoidingView>
       </Modal>
 
     </SafeAreaView>
@@ -619,6 +646,10 @@ const styles = StyleSheet.create({
   shareHandle: { width: 36, height: 4, borderRadius: 2, backgroundColor: C.cinza2, alignSelf: 'center', marginBottom: 14 },
   shareTitle: { fontSize: 16, fontWeight: '800', color: C.cinza4 },
   shareSubtitle: { fontSize: 12, color: C.cinza3, marginTop: 2, marginBottom: 12 },
+  shareComentarioInput: {
+    backgroundColor: C.cinza1, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10,
+    fontSize: 14, color: C.cinza4, minHeight: 44, maxHeight: 90, marginBottom: 14,
+  },
   shareRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 13, borderBottomWidth: 0.5, borderBottomColor: C.cinza2 },
   shareIconWrap: { width: 34, height: 34, borderRadius: 17, backgroundColor: C.azulClaro, alignItems: 'center', justifyContent: 'center' },
   shareRowText: { fontSize: 14, fontWeight: '600', color: C.cinza4 },

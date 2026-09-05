@@ -5,11 +5,11 @@ import * as Linking from 'expo-linking';
 import { useRouter } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import { signOut } from 'firebase/auth';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { collection, doc, limit, onSnapshot, orderBy, query, where } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
 import {
     ActivityIndicator, Alert, Image, ImageBackground, Modal,
-    ScrollView, StatusBar, StyleSheet, Text,
+    ScrollView, Share, StatusBar, StyleSheet, Text,
     TouchableOpacity, View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -34,6 +34,28 @@ const C = {
   error:      '#CC1016',
   borda:      '#D6CECE',
 };
+
+// ── "Tenho interesse em..." — opções de disponibilidade, guardadas em
+// perfil.abertoA (array de strings). Estilo "Open to" do LinkedIn.
+const OPCOES_INTERESSE = [
+  { valor: 'emprego',    label: 'Encontrar um novo emprego',    icone: 'briefcase-outline' },
+  { valor: 'freelance',  label: 'Prestar serviços freelance',   icone: 'construct-outline' },
+  { valor: 'contratar',  label: 'Contratar talento',            icone: 'people-outline' },
+  { valor: 'mentor',     label: 'Ser mentor(a)',                icone: 'school-outline' },
+  { valor: 'mentoria',   label: 'Encontrar um mentor',          icone: 'compass-outline' },
+  { valor: 'parcerias',  label: 'Parcerias e colaborações',     icone: 'people-circle-outline' },
+];
+
+function tempoDesde(timestamp) {
+  if (!timestamp) return '';
+  const agora = new Date();
+  const data = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+  const diff = Math.floor((agora - data) / 1000);
+  if (diff < 60) return 'agora';
+  if (diff < 3600) return `${Math.floor(diff / 60)}m`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
+  return `${Math.floor(diff / 86400)}d`;
+}
 
 function InfoLinha({ icone, label, valor }) {
   if (!valor) return null;
@@ -98,6 +120,49 @@ export default function MyProfileScreen() {
   const [banners, setBanners] = useState([]);
   const [bannerIdx, setBannerIdx] = useState(0);
 
+  // ── NOVO: Informações de contacto ──
+  const [modalContacto, setModalContacto] = useState(false);
+
+  // ── NOVO: "Tenho interesse em..." ──
+  const [modalInteresse, setModalInteresse]   = useState(false);
+  const [selecaoInteresse, setSelecaoInteresse] = useState([]);
+  const [aGuardarInteresse, setAGuardarInteresse] = useState(false);
+
+  // ── NOVO: Recursos ──
+  const [modalRecursos, setModalRecursos] = useState(false);
+
+  // ── NOVO: Visualizações do perfil (quem viu) ──
+  // Lê directamente users/{uid}/visualizacoesPerfil — a contagem já não
+  // depende de nenhum campo separado (perfil.analytics...); é sempre o
+  // tamanho real desta lista. Cada visita fica guardada por visitante
+  // (merge), por isso a mesma pessoa não aparece duplicada, só actualiza
+  // a data da última visita.
+  const [modalVisualizacoes, setModalVisualizacoes] = useState(false);
+  const [visualizacoesLista, setVisualizacoesLista] = useState([]);
+
+  useEffect(() => {
+    if (!user?.uid) return;
+    // Ciclo de 30 dias, tal como já estava indicado no texto ("repõe a
+    // cada 30 dias"): em vez de contar visitas para sempre, ignora
+    // qualquer visita com mais de 30 dias. Não precisa de nenhuma
+    // limpeza automática no servidor — se ninguém visitar o perfil
+    // durante 30 dias, o número desce sozinho até 0, porque essas
+    // visitas antigas deixam simplesmente de ser incluídas na consulta.
+    const trintaDiasAtras = new Date();
+    trintaDiasAtras.setDate(trintaDiasAtras.getDate() - 30);
+
+    const q = query(
+      collection(db, 'users', user.uid, 'visualizacoesPerfil'),
+      where('visitadoEm', '>=', trintaDiasAtras),
+      orderBy('visitadoEm', 'desc'),
+      limit(100)
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      setVisualizacoesLista(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    }, () => {});
+    return unsub;
+  }, [user?.uid]);
+
   useEffect(() => {
     const unsub = onSnapshot(doc(db, 'configuracoes', 'banners'), (snap) => {
       if (snap.exists()) {
@@ -154,6 +219,8 @@ export default function MyProfileScreen() {
   const telefone     = perfil?.telPrincipal || perfil?.telefone || '';
   const emailPerfil  = perfil?.email || perfil?.emailContacto || perfil?.emailCorporativo || '';
   const resumoPerfil = perfil?.resumo || perfil?.bio || '';
+  const slugPerfil   = (nome || 'utilizador').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  const urlPerfil    = perfil?.urlPublica || `https://connectall.ao/in/${slugPerfil}`;
 
   const formacoes     = Array.isArray(perfil?.formacoes)            ? perfil.formacoes            : [];
   const experiencias  = Array.isArray(perfil?.experiencias)         ? perfil.experiencias         : [];
@@ -162,7 +229,8 @@ export default function MyProfileScreen() {
   const compPessoais  = Array.isArray(perfil?.competenciasPessoais) ? perfil.competenciasPessoais : [];
   const idiomas       = Array.isArray(perfil?.idiomas)              ? perfil.idiomas              : [];
   const certUrls      = Array.isArray(perfil?.certUrls)             ? perfil.certUrls             : [];
-  const visualizacoesPerfil   = perfil?.analytics?.perfilVisualizacoes?.count   || 0;
+  const abertoA       = Array.isArray(perfil?.abertoA)              ? perfil.abertoA              : [];
+  const visualizacoesPerfil   = visualizacoesLista.length;
   const impressoesPublicacoes = perfil?.analytics?.publicacoesImpressoes?.count || 0;
 
   const camposTotal = [
@@ -218,12 +286,6 @@ export default function MyProfileScreen() {
       if (!result.canceled && result.assets[0].uri && user) {
         setAtualizandoCapa(true);
         try {
-          // Antes: uploadFotoPerfil(`${user.uid}_capa`, ...) — usava um ID
-          // inventado, o que fazia o setDoc interno criar um documento
-          // novo e vazio em users/<uid>_capa (visível em "Conexões"), em
-          // vez de actualizar o perfil real do utilizador. Corrigido para
-          // usar a função certa (uploadFotoCapa, que já grava no campo
-          // capaURL) com o UID real do utilizador.
           const url = await uploadFotoCapa(user.uid, result.assets[0].uri);
           await guardarPerfil({ capaURL: url });
         } catch { await guardarPerfil({ capaURL: result.assets[0].uri }); }
@@ -243,12 +305,9 @@ export default function MyProfileScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
-              // Para os listeners do contexto ANTES de fazer logout
               pararListenerPerfil();
-
               if (user?.uid) await AsyncStorage.removeItem(`perfil_${user.uid}`);
               await signOut(auth);
-              // onAuthStateChanged no _layout trata da navegação
             } catch {
               Alert.alert('Erro', 'Não foi possível terminar a sessão.');
             }
@@ -261,11 +320,95 @@ export default function MyProfileScreen() {
   const irParaEditar = () => verificarAcesso() && router.push({ pathname: '/(auth)/profile', params: { voltarPara: 'my-profile' } });
   const irParaPlanos = () => verificarAcesso() && router.push('/(main)/planos');
 
+  // ── NOVO: Informações de contacto ──
+  const abrirInfoContacto = () => setModalContacto(true);
+  const temInfoContacto = !!(telefone || perfil?.telAlternativo || emailPerfil || localizacao || perfil?.endereco || perfil?.linkedin || perfil?.website);
+
+  // ── NOVO: "Tenho interesse em..." ──
+  const abrirModalInteresse = () => {
+    if (!verificarAcesso()) return;
+    setSelecaoInteresse(abertoA);
+    setModalInteresse(true);
+  };
+
+  const alternarInteresse = (valor) => {
+    setSelecaoInteresse((prev) =>
+      prev.includes(valor) ? prev.filter((v) => v !== valor) : [...prev, valor]
+    );
+  };
+
+  const guardarInteresse = async () => {
+    setAGuardarInteresse(true);
+    try {
+      await guardarPerfil({ abertoA: selecaoInteresse });
+      setModalInteresse(false);
+    } catch (e) {
+      Alert.alert('Erro', 'Não foi possível guardar. Tenta novamente.');
+    } finally {
+      setAGuardarInteresse(false);
+    }
+  };
+
+  const labelBotaoInteresse =
+    abertoA.length === 0
+      ? 'Tenho interesse em...'
+      : abertoA.length === 1
+        ? `Aberto(a) a: ${OPCOES_INTERESSE.find((o) => o.valor === abertoA[0])?.label || abertoA[0]}`
+        : `Aberto(a) a ${abertoA.length} oportunidades`;
+
+  // ── NOVO: Recursos ──
+  const abrirRecursos = () => setModalRecursos(true);
+
+  const partilharPerfil = async () => {
+    setModalRecursos(false);
+    try {
+      await Share.share({
+        message: `Vê o perfil de ${nome} na ConnectAll Angola: ${urlPerfil}`,
+        url: urlPerfil,
+        title: `Perfil de ${nome} · ConnectAll Angola`,
+      });
+    } catch (e) {
+      Alert.alert('Erro', 'Não foi possível partilhar o perfil agora.');
+    }
+  };
+
+  const verPerfilPublico = () => {
+    setModalRecursos(false);
+    if (!user?.uid) return;
+    router.push({ pathname: '/(main)/perfil-publico', params: { uid: user.uid } });
+  };
+
+  const verCurriculo = () => {
+    setModalRecursos(false);
+    const cv = perfil?.uriCV || perfil?.cvUrl;
+    if (cv) {
+      abrirDocumento(cv, 'Curriculum Vitae');
+    } else {
+      Alert.alert(
+        'Ainda sem currículo',
+        'Ainda não carregaste um Curriculum Vitae. Podes adicionar um em "Editar perfil".',
+        [
+          { text: 'Agora não', style: 'cancel' },
+          { text: 'Adicionar CV', onPress: irParaEditar },
+        ]
+      );
+    }
+  };
+
+  const irParaConfiguracoes = () => {
+    setModalRecursos(false);
+    router.push('/(auth)/configuracoes');
+  };
+
+  const irParaSuporte = () => {
+    setModalRecursos(false);
+    router.push('/(auth)/contactar-suporte');
+  };
+
   return (
     <SafeAreaView style={s.safe}>
       <StatusBar barStyle="dark-content" backgroundColor={C.cinza1} />
 
-      {/* Topbar */}
       <View style={s.topbar}>
         <View style={s.logoRow}>
           <Text style={s.logoConnect}>Connect</Text>
@@ -333,13 +476,17 @@ export default function MyProfileScreen() {
               ) : null}
             </View>
 
-            {localizacao ? (
-              <View style={s.localizacaoRow}>
-                <Text style={s.localizacaoTxt}>{localizacao}</Text>
-                <Text style={s.separadorDot}>·</Text>
-                <TouchableOpacity><Text style={s.linkAzul}>Informações de contacto</Text></TouchableOpacity>
-              </View>
-            ) : null}
+            <View style={s.localizacaoRow}>
+              {localizacao ? (
+                <>
+                  <Text style={s.localizacaoTxt}>{localizacao}</Text>
+                  <Text style={s.separadorDot}>·</Text>
+                </>
+              ) : null}
+              <TouchableOpacity onPress={abrirInfoContacto}>
+                <Text style={s.linkAzul}>Informações de contacto</Text>
+              </TouchableOpacity>
+            </View>
 
             {(perfil?.emailVerificado || perfil?.telVerificado) && (
               <View style={s.badgesRow}>
@@ -359,13 +506,13 @@ export default function MyProfileScreen() {
             )}
 
             <View style={s.botoesAcaoRow}>
-              <TouchableOpacity style={s.btnPrimario} onPress={() => {}}>
-                <Text style={s.btnPrimarioTxt}>Tenho interesse em...</Text>
+              <TouchableOpacity style={s.btnPrimario} onPress={abrirModalInteresse}>
+                <Text style={s.btnPrimarioTxt} numberOfLines={1}>{labelBotaoInteresse}</Text>
               </TouchableOpacity>
               <TouchableOpacity style={s.btnSecundario} onPress={irParaEditar}>
                 <Text style={s.btnSecundarioTxt}>Adicionar secção ao perfil</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={s.btnRecursos} onPress={() => {}}>
+              <TouchableOpacity style={s.btnRecursos} onPress={abrirRecursos}>
                 <Text style={s.btnRecursosTxt}>Recursos</Text>
               </TouchableOpacity>
             </View>
@@ -389,7 +536,6 @@ export default function MyProfileScreen() {
           )}
         </View>
 
-        {/* CARD 2 — Sugestões */}
         {percentagem < 100 && (
           <SeccaoCard>
             <Text style={s.sugestoesTitulo}>Sugestões para você</Text>
@@ -439,21 +585,21 @@ export default function MyProfileScreen() {
           </SeccaoCard>
         )}
 
-        {/* CARD 3 — Análise */}
         <SeccaoCard>
           <Text style={s.analiseTitulo}>Análise</Text>
           <View style={s.sugestoesVisivel}>
             <Ionicons name="eye-outline" size={14} color={C.cinza3} />
             <Text style={s.sugestoesVisivelTxt}>Exibido apenas a você</Text>
           </View>
-          <View style={s.analiseItem}>
+          <TouchableOpacity style={s.analiseItem} onPress={() => setModalVisualizacoes(true)}>
             <Ionicons name="people-outline" size={22} color={C.cinza4} style={{ marginRight: 12 }} />
-            <View>
+            <View style={{ flex: 1 }}>
               <Text style={s.analiseNum}>{visualizacoesPerfil} visualizações do perfil</Text>
               <Text style={s.analiseDesc}>Atualize o seu perfil para atrair visitantes.</Text>
               <Text style={s.analiseDescSub}>Ciclo atual (repõe a cada 30 dias)</Text>
             </View>
-          </View>
+            <Feather name="chevron-right" size={16} color={C.cinza3} />
+          </TouchableOpacity>
           <View style={s.analiseItem}>
             <Ionicons name="bar-chart-outline" size={22} color={C.cinza4} style={{ marginRight: 12 }} />
             <View>
@@ -467,7 +613,6 @@ export default function MyProfileScreen() {
           </TouchableOpacity>
         </SeccaoCard>
 
-        {/* CARD 4 — Atividades */}
         <SeccaoCard>
           <View style={s.seccaoHeaderRow}>
             <View>
@@ -498,7 +643,6 @@ export default function MyProfileScreen() {
           </View>
         </SeccaoCard>
 
-        {/* CARD 5 — Experiência */}
         <SeccaoCard>
           <SeccaoHeader titulo="Experiência" onAdd={irParaEditar} onEdit={irParaEditar} />
           {experiencias.length === 0 ? (
@@ -530,7 +674,6 @@ export default function MyProfileScreen() {
           ))}
         </SeccaoCard>
 
-        {/* CARD 6 — Formação */}
         <SeccaoCard>
           <SeccaoHeader titulo="Formação académica" onAdd={irParaEditar} onEdit={irParaEditar} />
           {formacoes.length === 0 ? (
@@ -555,7 +698,6 @@ export default function MyProfileScreen() {
           ))}
         </SeccaoCard>
 
-        {/* CARD 7 — Competências */}
         {(compTecnicas.length + compPessoais.length) > 0 ? (
           <SeccaoCard>
             <SeccaoHeader titulo="Competências" onAdd={irParaEditar} onEdit={irParaEditar} />
@@ -593,7 +735,6 @@ export default function MyProfileScreen() {
           </SeccaoCard>
         )}
 
-        {/* CARD 8 — Certificações */}
         {(certificacoes.length > 0 || certUrls.length > 0) && (
           <SeccaoCard>
             <SeccaoHeader titulo="Certificações e Formações" onAdd={irParaEditar} onEdit={irParaEditar} />
@@ -626,7 +767,6 @@ export default function MyProfileScreen() {
           </SeccaoCard>
         )}
 
-        {/* CARD 9 — Idiomas */}
         {idiomas.length > 0 && (
           <SeccaoCard>
             <SeccaoHeader titulo="Idiomas" onAdd={irParaEditar} onEdit={irParaEditar} />
@@ -645,7 +785,6 @@ export default function MyProfileScreen() {
           </SeccaoCard>
         )}
 
-        {/* CARD 10 — Dados Pessoais */}
         <SeccaoCard>
           <SeccaoHeader titulo="Dados Pessoais" onEdit={irParaEditar} />
           <InfoLinha icone="calendar"    label="Data de Nascimento"   valor={perfil?.dataNasc} />
@@ -660,7 +799,6 @@ export default function MyProfileScreen() {
           <InfoLinha icone="home"        label="Endereço"             valor={perfil?.endereco} />
         </SeccaoCard>
 
-        {/* CARD 11 — Perfil Profissional */}
         <SeccaoCard>
           <SeccaoHeader titulo="Perfil Profissional" onEdit={irParaEditar} />
           <InfoLinha icone="award"       label="Título Profissional"   valor={titulo} />
@@ -675,7 +813,6 @@ export default function MyProfileScreen() {
           ) : null}
         </SeccaoCard>
 
-        {/* CARD 12 — Documentos */}
         {(perfil?.uriCV || perfil?.cvUrl || perfil?.uriBilhete || perfil?.uriCertificados || perfil?.uriCartaConducao || perfil?.uriPortefolio || perfil?.uriDiploma) && (
           <SeccaoCard>
             <SeccaoHeader titulo="Documentos" onEdit={irParaEditar} />
@@ -724,7 +861,6 @@ export default function MyProfileScreen() {
           </SeccaoCard>
         )}
 
-        {/* CARD 13 — Redes Profissionais */}
         {(perfil?.linkedin || perfil?.github || perfil?.behance || perfil?.website) && (
           <SeccaoCard>
             <SeccaoHeader titulo="Redes Profissionais" onEdit={irParaEditar} />
@@ -759,7 +895,6 @@ export default function MyProfileScreen() {
           </SeccaoCard>
         )}
 
-        {/* CARD 14 — Interesses */}
         <SeccaoCard>
           <Text style={s.seccaoTitulo}>Interesses</Text>
           {perfil?.interesses && perfil.interesses.length > 0 ? (
@@ -803,7 +938,6 @@ export default function MyProfileScreen() {
           </View>
         </SeccaoCard>
 
-        {/* CARD 15 — Verificação e Segurança */}
         <SeccaoCard>
           <SeccaoHeader titulo="Verificação e Segurança" onEdit={irParaEditar} />
           <View style={s.verificacaoLista}>
@@ -834,7 +968,6 @@ export default function MyProfileScreen() {
           </View>
         </SeccaoCard>
 
-        {/* Banner publicitário */}
         {banners.length > 0 && (
           <View style={s.pubBloco}>
             <Image
@@ -867,22 +1000,19 @@ export default function MyProfileScreen() {
           </View>
         )}
 
-
-
-        {/* Rodapé */}
         <View style={s.rodape}>
           <View style={s.rodapeLinksRow}>
             <TouchableOpacity onPress={() => router.push({ pathname: '/(auth)/politicas', params: { tipo: 'privacidade' } })}>
               <Text style={s.rodapeLink}>Sobre</Text>
             </TouchableOpacity>
             <TouchableOpacity><Text style={s.rodapeLink}>Acessibilidade</Text></TouchableOpacity>
-            <TouchableOpacity>
+            <TouchableOpacity onPress={irParaSuporte}>
               <View style={s.duvidasBtn}>
                 <Ionicons name="help-circle-outline" size={14} color={C.cinza3} />
                 <Text style={s.rodapeLink}>Dúvidas?</Text>
               </View>
             </TouchableOpacity>
-            <TouchableOpacity>
+            <TouchableOpacity onPress={irParaConfiguracoes}>
               <View style={s.duvidasBtn}>
                 <Ionicons name="settings-outline" size={14} color={C.cinza3} />
                 <Text style={s.rodapeLink}>Gerir conta e privacidade</Text>
@@ -899,7 +1029,6 @@ export default function MyProfileScreen() {
           <Text style={s.rodapeCopyright}>ConnectAll Angola © {new Date().getFullYear()}</Text>
         </View>
 
-        {/* Terminar sessão */}
         <View style={s.logoutWrap}>
           <TouchableOpacity style={s.logoutBtn} onPress={terminarSessao}>
             <Feather name="log-out" size={18} color={C.error} />
@@ -910,7 +1039,6 @@ export default function MyProfileScreen() {
         <View style={{ height: 40 }} />
       </ScrollView>
 
-      {/* Modal imagem */}
       <Modal visible={modalImagem} transparent animationType="fade" onRequestClose={() => setModalImagem(false)}>
         <View style={s.modalFundo}>
           <TouchableOpacity style={s.modalFechar} onPress={() => setModalImagem(false)}>
@@ -922,9 +1050,270 @@ export default function MyProfileScreen() {
         </View>
       </Modal>
 
+      {/* ── NOVO: Modal "Informações de contacto" ── */}
+      <Modal visible={modalContacto} transparent animationType="slide" onRequestClose={() => setModalContacto(false)}>
+        <TouchableOpacity style={s.modalOverlay} activeOpacity={1} onPress={() => setModalContacto(false)}>
+          <View style={s.modalContactoSheet} onStartShouldSetResponder={() => true}>
+            <View style={s.modalHandle} />
+            <View style={s.modalContactoHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={s.modalContactoNome}>{nome}</Text>
+                <Text style={s.modalContactoSub}>Informações de contacto</Text>
+              </View>
+              <TouchableOpacity onPress={() => setModalContacto(false)}>
+                <Feather name="x" size={22} color={C.cinza4} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 420 }}>
+              {temInfoContacto ? (
+                <>
+                  {telefone && (
+                    <View style={s.modalContactoLinha}>
+                      <View style={s.modalContactoIconeWrap}><Feather name="phone" size={16} color={C.azul} /></View>
+                      <View>
+                        <Text style={s.modalContactoTxt}>+244 {telefone}</Text>
+                        <Text style={s.modalContactoLabel}>Telefone principal</Text>
+                      </View>
+                    </View>
+                  )}
+                  {perfil?.telAlternativo && (
+                    <View style={s.modalContactoLinha}>
+                      <View style={s.modalContactoIconeWrap}><Feather name="phone" size={16} color={C.azul} /></View>
+                      <View>
+                        <Text style={s.modalContactoTxt}>+244 {perfil.telAlternativo}</Text>
+                        <Text style={s.modalContactoLabel}>Telefone alternativo</Text>
+                      </View>
+                    </View>
+                  )}
+                  {emailPerfil && (
+                    <TouchableOpacity style={s.modalContactoLinha} onPress={() => Linking.openURL(`mailto:${emailPerfil}`)}>
+                      <View style={s.modalContactoIconeWrap}><Feather name="mail" size={16} color={C.azul} /></View>
+                      <View>
+                        <Text style={s.modalContactoTxt}>{emailPerfil}</Text>
+                        <Text style={s.modalContactoLabel}>E-mail</Text>
+                      </View>
+                    </TouchableOpacity>
+                  )}
+                  {(localizacao || perfil?.endereco) && (
+                    <View style={s.modalContactoLinha}>
+                      <View style={s.modalContactoIconeWrap}><Feather name="map-pin" size={16} color={C.azul} /></View>
+                      <View>
+                        <Text style={s.modalContactoTxt}>{perfil?.endereco || localizacao}</Text>
+                        <Text style={s.modalContactoLabel}>Localização</Text>
+                      </View>
+                    </View>
+                  )}
+                  {perfil?.linkedin && (
+                    <TouchableOpacity style={s.modalContactoLinha} onPress={() => Linking.openURL(perfil.linkedin)}>
+                      <View style={s.modalContactoIconeWrap}><Feather name="linkedin" size={16} color={C.azul} /></View>
+                      <View>
+                        <Text style={[s.modalContactoTxt, { color: C.azul }]} numberOfLines={1}>{perfil.linkedin}</Text>
+                        <Text style={s.modalContactoLabel}>LinkedIn</Text>
+                      </View>
+                    </TouchableOpacity>
+                  )}
+                  {perfil?.website && (
+                    <TouchableOpacity style={s.modalContactoLinha} onPress={() => Linking.openURL(perfil.website)}>
+                      <View style={s.modalContactoIconeWrap}><Feather name="globe" size={16} color={C.azul} /></View>
+                      <View>
+                        <Text style={[s.modalContactoTxt, { color: C.azul }]} numberOfLines={1}>{perfil.website}</Text>
+                        <Text style={s.modalContactoLabel}>Website</Text>
+                      </View>
+                    </TouchableOpacity>
+                  )}
+
+                  <Text style={s.modalContactoSecTitulo}>Perfil na ConnectAll</Text>
+                  <View style={s.modalContactoLinha}>
+                    <View style={s.modalContactoIconeWrap}><Feather name="link" size={16} color={C.azul} /></View>
+                    <Text style={s.modalContactoTxt} numberOfLines={1}>{urlPerfil}</Text>
+                  </View>
+                </>
+              ) : (
+                <View style={{ paddingVertical: 16, alignItems: 'center', gap: 10 }}>
+                  <Feather name="user-x" size={32} color={C.cinza3} />
+                  <Text style={s.vazioTxt}>Ainda não tens informações de contacto preenchidas.</Text>
+                </View>
+              )}
+            </ScrollView>
+
+            <TouchableOpacity style={s.modalContactoEditarBtn} onPress={() => { setModalContacto(false); irParaEditar(); }}>
+              <Text style={s.modalContactoEditarTxt}>Editar informações de contacto</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* ── NOVO: Modal "Tenho interesse em..." ── */}
+      <Modal visible={modalInteresse} transparent animationType="slide" onRequestClose={() => setModalInteresse(false)}>
+        <TouchableOpacity style={s.modalOverlay} activeOpacity={1} onPress={() => setModalInteresse(false)}>
+          <View style={s.modalContactoSheet} onStartShouldSetResponder={() => true}>
+            <View style={s.modalHandle} />
+            <View style={s.modalContactoHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={s.modalContactoNome}>Tenho interesse em...</Text>
+                <Text style={s.modalContactoSub}>Escolhe uma ou mais opções — outros utilizadores podem ver isto no teu perfil.</Text>
+              </View>
+              <TouchableOpacity onPress={() => setModalInteresse(false)}>
+                <Feather name="x" size={22} color={C.cinza4} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 380 }}>
+              {OPCOES_INTERESSE.map((op) => {
+                const seleccionado = selecaoInteresse.includes(op.valor);
+                return (
+                  <TouchableOpacity
+                    key={op.valor}
+                    style={s.interesseOpcaoLinha}
+                    onPress={() => alternarInteresse(op.valor)}
+                  >
+                    <View style={[s.interesseOpcaoIcone, seleccionado && { backgroundColor: C.azulClaro }]}>
+                      <Ionicons name={op.icone} size={18} color={seleccionado ? C.azul : C.cinza3} />
+                    </View>
+                    <Text style={[s.interesseOpcaoTxt, seleccionado && { color: C.azul, fontWeight: '700' }]}>
+                      {op.label}
+                    </Text>
+                    <View style={{ flex: 1 }} />
+                    <View style={[s.interesseCheck, seleccionado && s.interesseCheckActivo]}>
+                      {seleccionado && <Ionicons name="checkmark" size={13} color="#fff" />}
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+
+            <TouchableOpacity
+              style={[s.modalContactoEditarBtn, { backgroundColor: C.azul }]}
+              onPress={guardarInteresse}
+              disabled={aGuardarInteresse}
+            >
+              {aGuardarInteresse
+                ? <ActivityIndicator color="#fff" />
+                : <Text style={[s.modalContactoEditarTxt, { color: '#fff' }]}>Guardar</Text>}
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* ── NOVO: Modal "Recursos" ── */}
+      <Modal visible={modalRecursos} transparent animationType="slide" onRequestClose={() => setModalRecursos(false)}>
+        <TouchableOpacity style={s.modalOverlay} activeOpacity={1} onPress={() => setModalRecursos(false)}>
+          <View style={s.modalContactoSheet} onStartShouldSetResponder={() => true}>
+            <View style={s.modalHandle} />
+            <Text style={[s.modalContactoNome, { marginBottom: 12 }]}>Recursos</Text>
+
+            <TouchableOpacity style={s.recursoLinha} onPress={verPerfilPublico}>
+              <View style={s.modalContactoIconeWrap}><Feather name="eye" size={17} color={C.azul} /></View>
+              <View style={{ flex: 1 }}>
+                <Text style={s.recursoTxt}>Ver perfil como os outros veem</Text>
+                <Text style={s.recursoDesc}>Abre a versão pública do teu perfil.</Text>
+              </View>
+              <Feather name="chevron-right" size={16} color={C.cinza3} />
+            </TouchableOpacity>
+
+            <TouchableOpacity style={s.recursoLinha} onPress={partilharPerfil}>
+              <View style={s.modalContactoIconeWrap}><Feather name="share-2" size={17} color={C.azul} /></View>
+              <View style={{ flex: 1 }}>
+                <Text style={s.recursoTxt}>Partilhar perfil</Text>
+                <Text style={s.recursoDesc}>Envia o link do teu perfil a alguém.</Text>
+              </View>
+              <Feather name="chevron-right" size={16} color={C.cinza3} />
+            </TouchableOpacity>
+
+            <TouchableOpacity style={s.recursoLinha} onPress={verCurriculo}>
+              <View style={s.modalContactoIconeWrap}><Feather name="file-text" size={17} color={C.azul} /></View>
+              <View style={{ flex: 1 }}>
+                <Text style={s.recursoTxt}>O meu Curriculum Vitae</Text>
+                <Text style={s.recursoDesc}>
+                  {(perfil?.uriCV || perfil?.cvUrl) ? 'Toca para abrir.' : 'Ainda não carregaste nenhum.'}
+                </Text>
+              </View>
+              <Feather name="chevron-right" size={16} color={C.cinza3} />
+            </TouchableOpacity>
+
+            <TouchableOpacity style={s.recursoLinha} onPress={irParaConfiguracoes}>
+              <View style={s.modalContactoIconeWrap}><Feather name="settings" size={17} color={C.azul} /></View>
+              <View style={{ flex: 1 }}>
+                <Text style={s.recursoTxt}>Configurações e privacidade</Text>
+                <Text style={s.recursoDesc}>Quem pode ver o teu perfil, notificações, etc.</Text>
+              </View>
+              <Feather name="chevron-right" size={16} color={C.cinza3} />
+            </TouchableOpacity>
+
+            <TouchableOpacity style={[s.recursoLinha, { borderBottomWidth: 0 }]} onPress={irParaSuporte}>
+              <View style={s.modalContactoIconeWrap}><Feather name="help-circle" size={17} color={C.azul} /></View>
+              <View style={{ flex: 1 }}>
+                <Text style={s.recursoTxt}>Ajuda e suporte</Text>
+                <Text style={s.recursoDesc}>Contacta a equipa da ConnectAll.</Text>
+              </View>
+              <Feather name="chevron-right" size={16} color={C.cinza3} />
+            </TouchableOpacity>
+
+            <TouchableOpacity style={s.modalContactoEditarBtn} onPress={() => setModalRecursos(false)}>
+              <Text style={s.modalContactoEditarTxt}>Fechar</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* ── NOVO: Modal "Visualizações do perfil" (quem viu) ── */}
+      <Modal visible={modalVisualizacoes} transparent animationType="slide" onRequestClose={() => setModalVisualizacoes(false)}>
+        <TouchableOpacity style={s.modalOverlay} activeOpacity={1} onPress={() => setModalVisualizacoes(false)}>
+          <View style={s.modalContactoSheet} onStartShouldSetResponder={() => true}>
+            <View style={s.modalHandle} />
+            <View style={s.modalContactoHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={s.modalContactoNome}>Visualizações do perfil</Text>
+                <Text style={s.modalContactoSub}>
+                  {visualizacoesPerfil === 0
+                    ? 'Ainda ninguém visitou o teu perfil.'
+                    : `${visualizacoesPerfil} pessoa${visualizacoesPerfil !== 1 ? 's' : ''} visitou${visualizacoesPerfil !== 1 ? 'ram' : ''} o teu perfil recentemente.`}
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => setModalVisualizacoes(false)}>
+                <Feather name="x" size={22} color={C.cinza4} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 440 }}>
+              {visualizacoesLista.length === 0 ? (
+                <View style={{ paddingVertical: 20, alignItems: 'center', gap: 10 }}>
+                  <Feather name="eye-off" size={32} color={C.cinza3} />
+                  <Text style={s.vazioTxt}>Sem visitas por agora.</Text>
+                </View>
+              ) : (
+                visualizacoesLista.map((v) => (
+                  <TouchableOpacity
+                    key={v.id}
+                    style={s.visitanteLinha}
+                    onPress={() => {
+                      setModalVisualizacoes(false);
+                      router.push({ pathname: '/(main)/perfil-publico', params: { uid: v.uid || v.id } });
+                    }}
+                  >
+                    {v.fotoURL ? (
+                      <Image source={{ uri: v.fotoURL }} style={s.visitanteAvatar} />
+                    ) : (
+                      <View style={[s.visitanteAvatar, { backgroundColor: C.azul, alignItems: 'center', justifyContent: 'center' }]}>
+                        <Text style={{ color: '#fff', fontWeight: '800' }}>{(v.nome || 'U')[0]?.toUpperCase()}</Text>
+                      </View>
+                    )}
+                    <View style={{ flex: 1 }}>
+                      <Text style={s.visitanteNome} numberOfLines={1}>{v.nome || 'Utilizador'}</Text>
+                      {v.cargo ? <Text style={s.visitanteCargo} numberOfLines={1}>{v.cargo}</Text> : null}
+                    </View>
+                    <Text style={s.visitanteTempo}>{tempoDesde(v.visitadoEm)}</Text>
+                  </TouchableOpacity>
+                ))
+              )}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
       <BloqueioAnonimo visivel={modalBloqueio} tipo="acao" onFechar={() => setModalBloqueio(false)} />
 
-      {/* Visualizador de documentos (PDF + imagens) */}
       {Visualizador}
     </SafeAreaView>
   );
@@ -968,7 +1357,7 @@ const s = StyleSheet.create({
   badgeVerde:        { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#EAF6EF', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12 },
   badgeVerdeTxt:     { fontSize: 11, fontWeight: '600', color: C.verde },
   botoesAcaoRow:     { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 },
-  btnPrimario:       { backgroundColor: C.azul, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 24 },
+  btnPrimario:       { backgroundColor: C.azul, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 24, maxWidth: '100%' },
   btnPrimarioTxt:    { color: C.branco, fontWeight: '700', fontSize: 13 },
   btnSecundario:     { borderWidth: 1.5, borderColor: C.cinza3, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 24 },
   btnSecundarioTxt:  { color: C.cinza4, fontWeight: '600', fontSize: 13 },
@@ -1089,4 +1478,37 @@ const s = StyleSheet.create({
   modalFechar:     { position: 'absolute', top: 40, right: 24, zIndex: 20, padding: 10 },
   modalImagem:     { width: '92%', height: '75%' },
   vazioTxt:        { fontSize: 13, color: C.cinza3, fontStyle: 'italic' },
+
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
+  modalContactoSheet: {
+    backgroundColor: C.branco, borderTopLeftRadius: 22, borderTopRightRadius: 22,
+    paddingHorizontal: 18, paddingTop: 10, paddingBottom: 26, maxHeight: '85%',
+  },
+  modalHandle: { width: 36, height: 4, borderRadius: 2, backgroundColor: C.cinza2, alignSelf: 'center', marginBottom: 12 },
+  modalContactoHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginBottom: 14, paddingBottom: 12, borderBottomWidth: 0.5, borderBottomColor: C.cinza2 },
+  modalContactoNome: { fontSize: 17, fontWeight: '800', color: C.preto },
+  modalContactoSub: { fontSize: 12, color: C.cinza3, marginTop: 2, lineHeight: 17 },
+  modalContactoLinha: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10 },
+  modalContactoIconeWrap: { width: 34, height: 34, borderRadius: 17, backgroundColor: C.azulClaro, alignItems: 'center', justifyContent: 'center' },
+  modalContactoTxt: { fontSize: 14, fontWeight: '600', color: C.cinza4, maxWidth: 240 },
+  modalContactoLabel: { fontSize: 11, color: C.cinza3, marginTop: 1 },
+  modalContactoSecTitulo: { fontSize: 12, fontWeight: '700', color: C.cinza3, textTransform: 'uppercase', letterSpacing: 0.4, marginTop: 14, marginBottom: 4 },
+  modalContactoEditarBtn: { marginTop: 16, backgroundColor: C.cinza1, borderRadius: 24, paddingVertical: 13, alignItems: 'center' },
+  modalContactoEditarTxt: { fontSize: 14, fontWeight: '700', color: C.cinza4 },
+
+  interesseOpcaoLinha: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12 },
+  interesseOpcaoIcone: { width: 36, height: 36, borderRadius: 18, backgroundColor: C.cinza1, alignItems: 'center', justifyContent: 'center' },
+  interesseOpcaoTxt: { fontSize: 14, color: C.cinza4, fontWeight: '500', flexShrink: 1 },
+  interesseCheck: { width: 22, height: 22, borderRadius: 11, borderWidth: 1.5, borderColor: C.cinza2, alignItems: 'center', justifyContent: 'center' },
+  interesseCheckActivo: { backgroundColor: C.azul, borderColor: C.azul },
+
+  recursoLinha: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 13, borderBottomWidth: 0.5, borderBottomColor: C.cinza2 },
+  recursoTxt: { fontSize: 14, fontWeight: '700', color: C.preto },
+  recursoDesc: { fontSize: 12, color: C.cinza3, marginTop: 2 },
+
+  visitanteLinha: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10, borderBottomWidth: 0.5, borderBottomColor: C.cinza2 },
+  visitanteAvatar: { width: 42, height: 42, borderRadius: 21 },
+  visitanteNome: { fontSize: 14, fontWeight: '700', color: C.preto },
+  visitanteCargo: { fontSize: 12, color: C.cinza3, marginTop: 1 },
+  visitanteTempo: { fontSize: 11, color: C.cinza3 },
 });

@@ -11,6 +11,14 @@
  * NOVO: bolinha vermelha no ícone "Início" quando há mensagens
  * por ler (usa o useUnreadMessages, o mesmo contador do ícone
  * de mensagens dentro do feed).
+ *
+ * ── CORREÇÃO ──
+ * `elevation: 10` no Android desenha a sua própria sombra, IGNORANDO
+ * shadowOffset/shadowOpacity/shadowRadius (esses só têm efeito no iOS).
+ * Um elevation tão alto criava uma faixa de sombra bem visível por cima
+ * da barra, sobre o fundo claro do feed — parecia um "quadro" extra.
+ * Baixado para um valor discreto (3), que ainda dá uma leve profundidade
+ * sem o gradiente pesado.
  */
 
 import { Ionicons } from '@expo/vector-icons';
@@ -169,7 +177,10 @@ export default function MainLayout() {
           paddingBottom: 8 + insets.bottom,
           paddingTop: 8,
           height: alturaBase + insets.bottom,
-          elevation: 10,
+          // Baixado de 10 para 3 — o valor antigo desenhava uma faixa de
+          // sombra bem visível por cima da barra no Android (ver nota no
+          // topo do ficheiro).
+          elevation: 3,
           shadowColor: '#000',
           shadowOffset: { width: 0, height: -2 },
           shadowOpacity: 0.08,

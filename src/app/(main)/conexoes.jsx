@@ -1,6 +1,16 @@
 /**
  * src/app/(main)/conexoes.jsx — ConnectAll Angola
  * Design estilo LinkedIn — cards com foto de capa + perfil
+ *
+ * ── ALTERAÇÃO ──
+ * conectar() e aceitarPedido() passam a chamar enviarNotificacao(), que
+ * escreve na colecção raiz "notificacoes" — a mesma fonte que o sininho
+ * (useNotifications) e o ecrã de Notificações já leem. Antes, um pedido
+ * de conexão só escrevia em "notificacoes_conexao" (usada apenas dentro
+ * deste próprio ecrã, na aba "Pedidos") — por isso nunca aparecia no
+ * sininho. Antes de enviar, verifica-se também a preferência
+ * notificacoes.novasConexoes do destinatário (definida em
+ * configuracoes.jsx) — se ele tiver desligado esse tipo, não envia.
  */
 
 import { Ionicons } from '@expo/vector-icons';
@@ -10,6 +20,7 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDoc,
   getDocs,
   limit,
   onSnapshot,
@@ -38,6 +49,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { db } from '../../config/firebase';
 import { useUser } from '../../context/UserContext';
+import { enviarNotificacao } from '../../services/notificationService';
 
 const { width } = Dimensions.get('window');
 const CARD_W    = (width - 36) / 2; // 2 colunas com margem
@@ -430,6 +442,21 @@ export default function ConexoesScreen() {
     }
   };
 
+  // ── Notificações ligadas a conexões ─────────────────────────────────
+  // Antes de enviar, verifica a preferência notificacoes.novasConexoes
+  // do DESTINATÁRIO (gravada em configuracoes.jsx) — se ele desligou
+  // este tipo, não envia nada.
+  const podeReceberNotifConexao = async (uid) => {
+    try {
+      const snap = await getDoc(doc(db, 'users', uid));
+      if (!snap.exists()) return true;
+      const notif = snap.data()?.notificacoes;
+      return notif?.novasConexoes !== false; // por defeito, activo
+    } catch (_) {
+      return true; // falha a verificar → não bloquear o envio
+    }
+  };
+
   // ── Acções ────────────────────────────────────────────────────────────
   const setPend = (uid, val) => setAcaoPend(prev => {
     const s = new Set(prev);
@@ -448,6 +475,18 @@ export default function ConexoesScreen() {
         uid: user.uid, nome: perfil?.nome || 'Utilizador',
         fotoURL: perfil?.fotoURL || null, estado: 'pendente', data: new Date().toISOString(),
       });
+      // NOVO: notificação real no sininho (colecção "notificacoes"), que
+      // antes nunca era criada para pedidos de conexão.
+      if (await podeReceberNotifConexao(uid)) {
+        await enviarNotificacao(
+          uid,
+          user.uid,
+          'conexao',
+          `${perfil?.nome || 'Alguém'} enviou-te um pedido de conexão`,
+          perfil?.fotoURL || null,
+          null
+        );
+      }
     } catch {
       Alert.alert('Erro', 'Não foi possível enviar o pedido.');
     } finally { setPend(uid, false); }
@@ -477,6 +516,17 @@ export default function ConexoesScreen() {
       await setDoc(doc(db, 'users', user.uid, 'conexoes', uid), { uid, conectadoEm: new Date().toISOString(), estado: 'confirmado' });
       await setDoc(doc(db, 'users', uid, 'conexoes', user.uid), { uid: user.uid, conectadoEm: new Date().toISOString(), estado: 'confirmado' });
       await deleteDoc(doc(db, 'users', user.uid, 'notificacoes_conexao', uid));
+      // NOVO: avisa quem enviou o pedido original que foi aceite.
+      if (await podeReceberNotifConexao(uid)) {
+        await enviarNotificacao(
+          uid,
+          user.uid,
+          'conexao',
+          `${perfil?.nome || 'Alguém'} aceitou o teu pedido de conexão`,
+          perfil?.fotoURL || null,
+          null
+        );
+      }
     } catch (_) {} finally { setPend(uid, false); }
   };
 

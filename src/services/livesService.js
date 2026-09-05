@@ -62,15 +62,47 @@ export function ouvirLivesAtivas(callback) {
   const q = query(livesRef, where('status', '==', 'ao_vivo'), orderBy('createdAt', 'desc'));
   return onSnapshot(q, (snap) => {
     const agora = Date.now();
-    const lives = snap.docs
-      .map((d) => ({ id: d.id, ...d.data() }))
-      .filter((live) => {
-        // Uma live sem heartbeat recente é tratada como "fantasma" — o
-        // anfitrião provavelmente fechou a app sem terminar correctamente.
-        const referencia = live.lastHeartbeat || live.createdAt;
-        if (!referencia?.toMillis) return true; // ainda a resolver no servidor: não esconder
-        return agora - referencia.toMillis() < HEARTBEAT_EXPIRA_MS;
-      });
+    const lives = [];
+
+    snap.docs.forEach((d) => {
+      const live = { id: d.id, ...d.data() };
+
+      // Usa o heartbeat se existir; senão cai para createdAt. Importante:
+      // usar "!== undefined" em vez de "??", para não confundir um campo
+      // que ainda não existe (undefined) com um campo que existe mas
+      // ainda está pendente de confirmação do servidor (null).
+      const referencia = live.lastHeartbeat !== undefined ? live.lastHeartbeat : live.createdAt;
+
+      let fresca;
+      if (referencia === null) {
+        // A live foi criada agora mesmo por este cliente e o servidor
+        // ainda não confirmou o timestamp — não é uma live fantasma,
+        // só ainda não resolveu. Não esconder.
+        fresca = true;
+      } else if (referencia && typeof referencia.toMillis === 'function') {
+        fresca = agora - referencia.toMillis() < HEARTBEAT_EXPIRA_MS;
+      } else {
+        // CORRECÇÃO: antes, um timestamp em falta ou num formato
+        // inesperado (ex: lives antigas criadas antes desta função
+        // existir, ou inseridas manualmente para testes, sem um
+        // Timestamp válido do Firestore) fazia esta live ser tratada
+        // como "recente" e nunca mais desaparecer. Agora é tratada
+        // como fantasma — some da lista e é terminada abaixo.
+        fresca = false;
+      }
+
+      if (fresca) {
+        lives.push(live);
+      } else {
+        // Limpeza real: não basta escondê-la só neste cliente — qualquer
+        // app que detecte uma live fantasma marca-a como "terminada" no
+        // Firestore, para desaparecer de vez para todos, não só para
+        // quem a detectou primeiro. Repetir esta chamada é inofensivo
+        // (o campo já fica "terminada" na próxima vez).
+        terminarLive(live.id).catch(() => {});
+      }
+    });
+
     callback(lives);
   });
 }

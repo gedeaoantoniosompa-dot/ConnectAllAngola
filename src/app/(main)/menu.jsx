@@ -62,16 +62,16 @@ const C = {
 };
 
 const ACCOES = [
-  { id: 'planos',       label: 'Planos Premium',          icone: 'diamond-outline',              rota: '/(main)/planos' },
-  { id: 'mensagens',    label: 'Mensagens',               icone: 'chatbubble-ellipses-outline', rota: '/(main)/chat' },
-  { id: 'conexoes',     label: 'Conexões',                icone: 'people-outline',               rota: '/(main)/conexoes' },
-  { id: 'live',         label: 'Live',                    icone: 'radio-outline',                rota: '/(main)/live' },
-  { id: 'saber',        label: 'Feira do Saber',          icone: 'mic-outline',                  rota: '/(main)/saber' },
-  { id: 'notificacoes', label: 'Notificações',             icone: 'notifications-outline',        rota: '/(main)/notifications' },
-  { id: 'vagas',        label: 'Vagas',                   icone: 'briefcase-outline',             rota: '/(main)/events' },
-  { id: 'entrevista',   label: 'Sala de Entrevista',      icone: 'videocam-outline',              rota: null },
-  { id: 'suporte',      label: 'Suporte',                 icone: 'headset-outline',               rota: '/(auth)/contactar-suporte' },
-  { id: 'criador',      label: 'Perfil Profissional',     icone: 'star-outline',                  rota: '/(main)/perfil-profissional' },
+  { id: 'planos',       chaveLabel: 'menu_planosPremium',   icone: 'diamond-outline',              rota: '/(main)/planos' },
+  { id: 'mensagens',    chaveLabel: 'menu_mensagens',       icone: 'chatbubble-ellipses-outline', rota: '/(main)/chat' },
+  { id: 'conexoes',     chaveLabel: 'menu_conexoes',        icone: 'people-outline',               rota: '/(main)/conexoes' },
+  { id: 'live',         chaveLabel: 'menu_live',            icone: 'radio-outline',                rota: '/(main)/live' },
+  { id: 'saber',        chaveLabel: 'menu_feiraDoSaber',    icone: 'mic-outline',                  rota: '/(main)/saber' },
+  { id: 'notificacoes', chaveLabel: 'menu_notificacoes',    icone: 'notifications-outline',        rota: '/(main)/notifications' },
+  { id: 'vagas',        chaveLabel: 'menu_vagas',           icone: 'briefcase-outline',             rota: '/(main)/events' },
+  { id: 'entrevista',   chaveLabel: 'menu_salaEntrevista',  icone: 'videocam-outline',              rota: null },
+  { id: 'suporte',      chaveLabel: 'menu_suporte',         icone: 'headset-outline',               rota: '/(auth)/contactar-suporte' },
+  { id: 'criador',      chaveLabel: 'menu_perfilProfissional', icone: 'star-outline',               rota: '/(main)/perfil-profissional' },
 ];
 
 function Avatar({ uri, nome, size = 52 }) {
@@ -115,6 +115,7 @@ export default function MenuScreen() {
     contextoAtivo,
     perfilExibido,
     trocarContexto,
+    t,
   } = useUser();
 
   const [modalTrocarConta, setModalTrocarConta] = useState(false);
@@ -144,15 +145,15 @@ export default function MenuScreen() {
 
   const terminarSessao = async () => {
     Alert.alert(
-      'Terminar sessão',
-      'Tens a certeza que queres sair?',
+      t('menu_confirmarSairTitulo'),
+      t('menu_confirmarSairTexto'),
       [
         {
-          text: 'Cancelar',
+          text: t('cancelar'),
           style: 'cancel',
         },
         {
-          text: 'Sair',
+          text: t('menu_sair'),
           style: 'destructive',
           onPress: async () => {
             try {
@@ -160,8 +161,8 @@ export default function MenuScreen() {
               router.replace('/(auth)/login');
             } catch {
               Alert.alert(
-                'Erro',
-                'Não foi possível terminar a sessão.'
+                t('erro'),
+                t('menu_erroSair')
               );
             }
           },
@@ -172,12 +173,12 @@ export default function MenuScreen() {
 
   const tipoPerfil = perfil?.tipoPerfil || 'utilizador';
   const subtituloTipo =
-    tipoPerfil === 'recrutador' ? 'Recrutador' : 'Utilizador';
+    tipoPerfil === 'recrutador' ? t('menu_recrutador') : t('menu_utilizador');
 
   // O texto mostrado no cartão muda conforme a identidade activa.
   const subtituloExibido =
     contextoAtivo === 'empresa'
-      ? 'Página da Empresa'
+      ? t('menu_paginaEmpresa')
       : subtituloTipo;
 
   // O cartão principal do Menu respeita o contexto.
@@ -200,7 +201,7 @@ export default function MenuScreen() {
       />
 
       <View style={s.header}>
-        <Text style={s.headerTitulo}>Menu</Text>
+        <Text style={s.headerTitulo}>{t('menu_titulo')}</Text>
 
         <TouchableOpacity style={s.headerBtn}>
           <Feather
@@ -242,8 +243,8 @@ export default function MenuScreen() {
             <Text style={s.cardPerfilSub}>
               {subtituloExibido} ·{' '}
               {contextoAtivo === 'empresa'
-                ? 'Abrir Feed da Empresa'
-                : 'Ver o teu perfil'}
+                ? t('menu_abrirFeedEmpresa')
+                : t('menu_verPerfil')}
             </Text>
           </View>
 
@@ -292,7 +293,7 @@ export default function MenuScreen() {
           </View>
 
           <Text style={s.cardTrocarTxt}>
-            Trocar de conta
+            {t('menu_trocarConta')}
           </Text>
 
           <Feather
@@ -319,7 +320,7 @@ export default function MenuScreen() {
           </View>
 
           <Text style={s.conviteTxt}>
-            Convidar amigos para a ConnectAll
+            {t('menu_convidarAmigos')}
           </Text>
 
           <Feather
@@ -332,7 +333,7 @@ export default function MenuScreen() {
         {/* Grelha de acções */}
         <View style={s.secLabel}>
           <Text style={s.secLabelTxt}>
-            Funcionalidades
+            {t('menu_funcionalidades')}
           </Text>
         </View>
 
@@ -403,13 +404,13 @@ export default function MenuScreen() {
                   },
                 ]}
               >
-                {item.label}
+                {t(item.chaveLabel)}
               </Text>
 
               {item.id === 'criador' && (
                 <View style={s.grelhaBadge}>
                   <Text style={s.grelhaBadgeTxt}>
-                    Novo
+                    {t('menu_novo')}
                   </Text>
                 </View>
               )}
@@ -420,7 +421,7 @@ export default function MenuScreen() {
         {/* Definições */}
         <View style={s.secLabel}>
           <Text style={s.secLabelTxt}>
-            Definições
+            {t('menu_definicoes')}
           </Text>
         </View>
 
@@ -428,7 +429,7 @@ export default function MenuScreen() {
           <TouchableOpacity
             style={s.linhaItem}
             onPress={() =>
-              router.push('/(auth)/profile')
+              router.push('/(auth)/configuracoes')
             }
           >
             <View style={s.linhaIconeWrap}>
@@ -440,7 +441,7 @@ export default function MenuScreen() {
             </View>
 
             <Text style={s.linhaItemTxt}>
-              Configurações e privacidade
+              {t('menu_configuracoesPrivacidade')}
             </Text>
 
             <Feather
@@ -455,13 +456,7 @@ export default function MenuScreen() {
           <TouchableOpacity
             style={s.linhaItem}
             onPress={() =>
-              router.push({
-                pathname:
-                  '/(auth)/politicas',
-                params: {
-                  tipo: 'privacidade',
-                },
-              })
+              router.push('/(auth)/contactar-suporte')
             }
           >
             <View style={s.linhaIconeWrap}>
@@ -473,7 +468,7 @@ export default function MenuScreen() {
             </View>
 
             <Text style={s.linhaItemTxt}>
-              Ajuda e suporte
+              {t('menu_ajudaSuporte')}
             </Text>
 
             <Feather
@@ -496,12 +491,12 @@ export default function MenuScreen() {
           />
 
           <Text style={s.logoutTxt}>
-            Terminar sessão
+            {t('menu_terminarSessao')}
           </Text>
         </TouchableOpacity>
 
         <Text style={s.versaoTxt}>
-          ConnectAll Angola · v1.0.0
+          {t('menu_versao')}
         </Text>
 
         <View style={{ height: 30 }} />
@@ -538,7 +533,7 @@ export default function MenuScreen() {
             <View style={s.modalHandle} />
 
             <Text style={s.modalTitulo}>
-              Trocar de conta
+              {t('menu_trocarContaTitulo')}
             </Text>
 
             {/* PERFIL PESSOAL — aparece sempre */}
@@ -554,7 +549,7 @@ export default function MenuScreen() {
 
               <View style={{ flex: 1 }}>
                 <Text style={s.modalContaNome}>
-                  {perfil?.nome || 'O meu perfil'}
+                  {perfil?.nome || t('menu_oMeuPerfil')}
                 </Text>
 
                 <Text style={s.modalContaTipo}>
@@ -565,7 +560,7 @@ export default function MenuScreen() {
               {contextoAtivo === 'pessoal' && (
                 <View style={s.modalContaActivaBadge}>
                   <Text style={s.modalContaActivaTxt}>
-                    Activa
+                    {t('activa')}
                   </Text>
                 </View>
               )}
@@ -590,11 +585,11 @@ export default function MenuScreen() {
                 <View style={{ flex: 1 }}>
                   <Text style={s.modalContaNome}>
                     {perfilEmpresa.nomeEmpresa ||
-                      'Página da Empresa'}
+                      t('menu_paginaEmpresa')}
                   </Text>
 
                   <Text style={s.modalContaTipo}>
-                    Página da Empresa · Feed
+                    {t('menu_paginaEmpresaFeed')}
                   </Text>
                 </View>
 
@@ -609,7 +604,7 @@ export default function MenuScreen() {
                         s.modalContaActivaTxt
                       }
                     >
-                      Activa
+                      {t('activa')}
                     </Text>
                   </View>
                 )}
@@ -636,7 +631,7 @@ export default function MenuScreen() {
                 </View>
 
                 <Text style={s.modalCriarTxt}>
-                  Criar Página da Empresa
+                  {t('menu_criarPaginaEmpresa')}
                 </Text>
 
                 <Feather
@@ -654,7 +649,7 @@ export default function MenuScreen() {
               }
             >
               <Text style={s.modalFecharTxt}>
-                Fechar
+                {t('fechar')}
               </Text>
             </TouchableOpacity>
           </View>

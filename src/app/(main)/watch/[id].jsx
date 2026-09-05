@@ -24,7 +24,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Animated, Image, Keyboard, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AgoraSurface, { VideoSourceType } from '../../../components/live/AgoraSurface';
 import FloatingHearts from '../../../components/live/FloatingHearts';
@@ -35,6 +35,7 @@ import { pedirPermissoesMedia } from '../../../config/utils/mediaPermissoes';
 import { useUser } from '../../../context/UserContext';
 import { AgoraEngine } from '../../../services/AgoraEngine';
 import {
+  atualizarEstadoConvidado,
   cancelarPedido,
   ouvirLive,
   ouvirMeuPedido,
@@ -53,7 +54,7 @@ const LOGO_CONNECTALL = require('../../../../assets/icon-app.png');
 export default function WatchScreen() {
   const router = useRouter();
   const { user, perfil } = useUser();
-  const eu = { uid: user?.uid, nome: perfil?.nome };
+  const eu = { uid: user?.uid, nome: perfil?.nome, fotoURL: perfil?.fotoURL };
 
   const {
     id: liveId,
@@ -71,6 +72,41 @@ export default function WatchScreen() {
   const [hostConectado, setHostConectado] = useState(false);
   const [erro, setErro] = useState(null);
 
+  // ── Altura do teclado, aplicada manualmente ──
+  // Mesma razão do broadcast.jsx: este ecrã tem uma view nativa de vídeo
+  // (AgoraSurface) a preencher o ecrã todo por baixo, e o
+  // KeyboardAvoidingView não conseguia produzir nenhum efeito visível no
+  // telemóvel por causa disso. Ouvir os eventos do teclado directamente e
+  // animar o paddingBottom só na zona de comentários/acções (sem nenhuma
+  // view nativa dentro) resolve isto de forma fiável.
+  const tecladoAltura = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const eventoMostrar = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const eventoEsconder = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const subMostrar = Keyboard.addListener(eventoMostrar, (e) => {
+      Animated.timing(tecladoAltura, {
+        toValue: e.endCoordinates?.height || 0,
+        duration: e.duration || 220,
+        useNativeDriver: false,
+      }).start();
+    });
+
+    const subEsconder = Keyboard.addListener(eventoEsconder, (e) => {
+      Animated.timing(tecladoAltura, {
+        toValue: 0,
+        duration: e?.duration || 220,
+        useNativeDriver: false,
+      }).start();
+    });
+
+    return () => {
+      subMostrar.remove();
+      subEsconder.remove();
+    };
+  }, []);
+
   const [liveInfo, setLiveInfo] = useState(null);
   const [palco, setPalco] = useState([]);
   const [meuPedido, setMeuPedido] = useState(null);
@@ -79,6 +115,7 @@ export default function WatchScreen() {
 
   const [microfoneAtivo, setMicrofoneAtivo] = useState(true);
   const [cameraAtiva, setCameraAtiva] = useState(true);
+  const [videoPausadoConvidado, setVideoPausadoConvidado] = useState(false);
   const [shareAberto, setShareAberto] = useState(false);
 
   useEffect(() => {
@@ -175,6 +212,7 @@ export default function WatchScreen() {
       promoverParaConvidado();
     } else {
       AgoraEngine.voltarAudiencia();
+      setVideoPausadoConvidado(false);
     }
   }, [palco, user?.uid]);
 
@@ -199,7 +237,7 @@ export default function WatchScreen() {
     } catch (e) {
       console.warn('[Watch] Erro ao renovar token para subir ao palco:', e);
     }
-    AgoraEngine.tornarBroadcaster();
+    await AgoraEngine.tornarBroadcaster();
     setMicrofoneAtivo(true);
     setCameraAtiva(true);
   }
@@ -227,17 +265,52 @@ export default function WatchScreen() {
 
   function alternarMicrofone() {
     AgoraEngine.mutarMic(microfoneAtivo);
-    setMicrofoneAtivo((v) => !v);
+    const novoEstado = !microfoneAtivo;
+    setMicrofoneAtivo(novoEstado);
+    if (souConvidadoAtivo && liveId && user?.uid) {
+      atualizarEstadoConvidado(liveId, user.uid, { microfoneDesligado: !novoEstado });
+    }
   }
 
+  // Mantém consistência com o botão de pausa: se estiver pausado, ligar a
+  // câmara aqui também sai da pausa (evita ficar "preso" com a câmara
+  // marcada como ligada mas o overlay de pausa ainda por cima). O estado
+  // é gravado em lives/{liveId}/palco/{uid} — é isto que faz TODOS os
+  // espectadores verem a minha foto quando desligo a câmara, não só eu.
   function alternarCamera() {
-    if (cameraAtiva) {
-      AgoraEngine.disableVideo();
+    const vaiFicarAtiva = !cameraAtiva;
+    if (vaiFicarAtiva) {
+      AgoraEngine.enableVideo();
+      AgoraEngine.startPreview();
+      setVideoPausadoConvidado(false);
     } else {
+      AgoraEngine.disableVideo();
+    }
+    setCameraAtiva(vaiFicarAtiva);
+    if (souConvidadoAtivo && liveId && user?.uid) {
+      atualizarEstadoConvidado(liveId, user.uid, {
+        cameraDesligada: !vaiFicarAtiva,
+        videoPausado: false,
+      });
+    }
+  }
+
+  // Pausar vídeo enquanto convidado no palco — igual ao anfitrião: mostra
+  // o logótipo da ConnectAll no meu preview (visível para todos, via
+  // LiveStageStrip) até eu retomar. Se a câmara já estava desligada antes
+  // de pausar, ao despausar não a liga.
+  function alternarPausaConvidado() {
+    const vaiPausar = !videoPausadoConvidado;
+    if (vaiPausar) {
+      AgoraEngine.disableVideo();
+    } else if (cameraAtiva) {
       AgoraEngine.enableVideo();
       AgoraEngine.startPreview();
     }
-    setCameraAtiva((v) => !v);
+    setVideoPausadoConvidado(vaiPausar);
+    if (liveId && user?.uid) {
+      atualizarEstadoConvidado(liveId, user.uid, { videoPausado: vaiPausar });
+    }
   }
 
   function handleReagir() {
@@ -303,7 +376,10 @@ export default function WatchScreen() {
 
       <FloatingHearts contagem={liveInfo?.gostosCount} corDestaque="#EC4C89" />
 
-      {/* O meu próprio vídeo, quando estou no palco como convidado */}
+      {/* O meu próprio vídeo, quando estou no palco como convidado. A
+          AgoraSurface fica sempre montada — só o overlay por cima muda —
+          exactamente pela mesma razão do anfitrião: remontar a view nativa
+          ao ligar/desligar causava vídeo a não voltar correctamente. */}
       {souConvidadoAtivo && (
         <View style={styles.meuPalcoWrap}>
           <AgoraSurface
@@ -311,6 +387,25 @@ export default function WatchScreen() {
             uid={0}
             sourceType={VideoSourceType.VideoSourceCamera}
           />
+
+          {videoPausadoConvidado && (
+            <View style={styles.meuPalcoOverlay}>
+              <Image source={LOGO_CONNECTALL} style={styles.meuPalcoLogoImg} resizeMode="contain" />
+            </View>
+          )}
+
+          {!videoPausadoConvidado && !cameraAtiva && (
+            <View style={styles.meuPalcoOverlay}>
+              {perfil?.fotoURL ? (
+                <Image source={{ uri: perfil.fotoURL }} style={styles.meuPalcoAvatarImg} />
+              ) : (
+                <View style={[styles.meuPalcoAvatarImg, styles.meuPalcoAvatarFallback]}>
+                  <Text style={styles.meuPalcoAvatarFallbackTxt}>{(perfil?.nome || 'U')[0]}</Text>
+                </View>
+              )}
+            </View>
+          )}
+
           <View style={styles.meuPalcoControles}>
             <TouchableOpacity style={styles.miniBtn} onPress={alternarMicrofone}>
               <Ionicons name={microfoneAtivo ? 'mic' : 'mic-off'} size={14} color="#fff" />
@@ -318,10 +413,22 @@ export default function WatchScreen() {
             <TouchableOpacity style={styles.miniBtn} onPress={alternarCamera}>
               <Ionicons name={cameraAtiva ? 'videocam' : 'videocam-off'} size={14} color="#fff" />
             </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.miniBtn, videoPausadoConvidado && styles.miniBtnActivo]}
+              onPress={alternarPausaConvidado}
+            >
+              <Ionicons name={videoPausadoConvidado ? 'play' : 'pause'} size={14} color="#fff" />
+            </TouchableOpacity>
           </View>
         </View>
       )}
 
+      {/* IMPORTANTE: o topBar fica FORA do KeyboardAvoidingView (tal como
+          o cabeçalho em conversa.jsx) — só o que está por baixo dele
+          (comentários + acções laterais) precisa de subir com o teclado.
+          behavior "height" no Android (com keyboardVerticalOffset) é a
+          mesma regra já comprovada em conversa.jsx; "undefined" tinha
+          deixado o teclado sem qualquer efeito no Android. */}
       <SafeAreaView style={styles.overlay}>
         <View style={styles.topBar}>
           <TouchableOpacity style={styles.voltarBtn} onPress={sair}>
@@ -333,31 +440,33 @@ export default function WatchScreen() {
           </View>
         </View>
 
-        <View style={styles.espacador} />
+        <Animated.View style={{ flex: 1, paddingBottom: tecladoAltura }}>
+          <View style={styles.espacador} />
 
-        <View style={styles.bottomArea}>
-          <View style={{ flex: 1 }}>
-            <LiveComments liveId={liveId} user={eu} corDestaque={corAtual} />
+          <View style={styles.bottomArea}>
+            <View style={{ flex: 1 }}>
+              <LiveComments liveId={liveId} user={eu} corDestaque={corAtual} />
+            </View>
+
+            <View style={styles.acoesLaterais}>
+              {/* Reage e anima (FloatingHearts) — já não mostra um número de
+                  toques ao lado do coração. */}
+              <TouchableOpacity style={styles.acaoBtn} onPress={handleReagir}>
+                <Ionicons name="heart" size={26} color="#fff" />
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.acaoBtn} onPress={() => setShareAberto(true)}>
+                <Ionicons name="arrow-redo" size={24} color="#fff" />
+                <Text style={styles.acaoLabel}>Partilhar</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.acaoBtn} onPress={handlePedirSubir}>
+                <Ionicons name={pedirIcone} size={24} color="#fff" />
+                <Text style={styles.acaoLabel}>{pedirLabel}</Text>
+              </TouchableOpacity>
+            </View>
           </View>
-
-          <View style={styles.acoesLaterais}>
-            {/* Reage e anima (FloatingHearts) — já não mostra um número de
-                toques ao lado do coração. */}
-            <TouchableOpacity style={styles.acaoBtn} onPress={handleReagir}>
-              <Ionicons name="heart" size={26} color="#fff" />
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.acaoBtn} onPress={() => setShareAberto(true)}>
-              <Ionicons name="arrow-redo" size={24} color="#fff" />
-              <Text style={styles.acaoLabel}>Partilhar</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.acaoBtn} onPress={handlePedirSubir}>
-              <Ionicons name={pedirIcone} size={24} color="#fff" />
-              <Text style={styles.acaoLabel}>{pedirLabel}</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+        </Animated.View>
       </SafeAreaView>
 
       <LiveShareSheet
@@ -428,8 +537,28 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  miniBtnActivo: {
+    backgroundColor: 'rgba(10,102,194,0.9)',
+  },
 
-  // ── Sobreposições: vídeo em pausa / câmara desligada ──
+  // ── Overlay dentro do preview do convidado (câmara desligada / pausa) ──
+  // Cobre por completo a AgoraSurface, que fica sempre montada por baixo.
+  meuPalcoOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#1F1F1F',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  meuPalcoLogoImg: { width: 40, height: 40 },
+  meuPalcoAvatarImg: { width: 46, height: 46, borderRadius: 23 },
+  meuPalcoAvatarFallback: {
+    backgroundColor: '#334155',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  meuPalcoAvatarFallbackTxt: { color: '#fff', fontSize: 18, fontWeight: '800' },
+
+  // ── Sobreposições: vídeo em pausa / câmara desligada (vídeo principal) ──
   overlayCentro: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: '#000',

@@ -4,13 +4,21 @@
 // Live: lista scrollável semi-transparente que cresce para cima + campo para
 // enviar um novo comentário. Usado tanto no ecrã do espectador (watch) como
 // no ecrã do host (broadcast).
+//
+// ── CORREÇÃO ──
+// Este componente tinha o seu próprio KeyboardAvoidingView, mas com
+// `behavior: undefined` no Android — ou seja, sem qualquer efeito nesse
+// sistema. Ao adicionar um KeyboardAvoidingView no ecrã pai (broadcast.jsx
+// e watch/[id].jsx) para resolver o teclado a tapar a caixa de comentário,
+// ficaram DOIS KeyboardAvoidingView encadeados — o que a documentação do
+// React Native desaconselha, porque um pode desfazer o cálculo do outro.
+// Agora este componente é uma simples View; é o ecrã pai, sozinho, que
+// trata do comportamento do teclado.
 
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useRef, useState } from 'react';
 import {
     FlatList,
-    KeyboardAvoidingView,
-    Platform,
     StyleSheet,
     Text,
     TextInput,
@@ -46,10 +54,7 @@ export default function LiveComments({ liveId, user, corDestaque = '#1677F2' }) 
   }
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      style={styles.wrap}
-    >
+    <View style={styles.wrap}>
       <View style={styles.listaWrap} pointerEvents="box-none">
         <FlatList
           ref={listaRef}
@@ -87,7 +92,7 @@ export default function LiveComments({ liveId, user, corDestaque = '#1677F2' }) 
           <Ionicons name="send" size={16} color="#fff" />
         </TouchableOpacity>
       </View>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 

@@ -8,6 +8,17 @@
  *  - Reações (gostos) com contagem em tempo real
  *  - Partilha da live para o feed da app
  *
+ * ── ALTERAÇÃO ──
+ * Cada convidado no palco passa a ter o seu próprio estado de vídeo
+ * (cameraDesligada, videoPausado, microfoneDesligado) gravado no respectivo
+ * documento em lives/{liveId}/palco/{uid}. Antes, quando um convidado
+ * desligava a câmara ou punha o vídeo em pausa, isso só se via no próprio
+ * ecrã dele — agora, como o LiveStageStrip lê estes campos do mesmo
+ * documento, TODOS os espectadores veem correctamente a foto de perfil
+ * (câmara desligada) ou o logótipo da ConnectAll (pausa) desse convidado.
+ * fotoURL também passa a ser guardado, para o LiveStageStrip poder mostrar
+ * a foto certa sem precisar de mais nenhuma consulta.
+ *
  * ATENÇÃO: assume-se que `db` (instância do Firestore) está exportada em
  * '../config/firebase', o mesmo padrão que livesService.js já usa. Se a tua
  * configuração do Firebase estiver noutro caminho, ajusta apenas a linha de
@@ -16,8 +27,9 @@
  *
  * Estrutura de dados no Firestore, por live (lives/{liveId}):
  *   comentarios/{autoId}   — { uid, nome, texto, criadoEm }
- *   pedidos/{uid}          — { uid, nome, numUid, estado, criadoEm }
- *   palco/{uid}            — { uid, nome, numUid, entrouEm }
+ *   pedidos/{uid}          — { uid, nome, fotoURL, numUid, estado, criadoEm }
+ *   palco/{uid}            — { uid, nome, fotoURL, numUid, entrouEm,
+ *                               cameraDesligada, videoPausado, microfoneDesligado }
  *   (documento da live)    — ganha os campos hostUidNumerico e gostosCount
  */
 
@@ -84,12 +96,14 @@ export function ouvirComentarios(liveId, callback, limiteVisivel = 200) {
 }
 
 // --- Pedidos para subir ao palco --------------------------------------------
+// user: { uid, nome, fotoURL? }
 
 export async function pedirParaSubir(liveId, user) {
   if (!liveId || !user?.uid) return;
   await setDoc(doc(db, 'lives', liveId, 'pedidos', user.uid), {
     uid: user.uid,
     nome: user.nome || 'Anónimo',
+    fotoURL: user.fotoURL || null,
     numUid: uidNumericoDe(user.uid),
     estado: 'pendente',
     criadoEm: serverTimestamp(),
@@ -137,7 +151,12 @@ export async function responderPedido(liveId, pedido, aceite) {
     await setDoc(doc(db, 'lives', liveId, 'palco', pedido.uid), {
       uid: pedido.uid,
       nome: pedido.nome,
+      fotoURL: pedido.fotoURL || null,
       numUid: pedido.numUid,
+      // Estado inicial do vídeo do convidado — ver atualizarEstadoConvidado.
+      cameraDesligada: false,
+      videoPausado: false,
+      microfoneDesligado: false,
       entrouEm: serverTimestamp(),
     });
   }
@@ -164,6 +183,21 @@ export async function removerDoPalco(liveId, uid) {
 
 export async function sairDoPalco(liveId, uid) {
   return removerDoPalco(liveId, uid);
+}
+
+// Actualiza o estado de vídeo/áudio de UM convidado específico no palco.
+// Chamado pelo próprio convidado (watch/[id].jsx) sempre que ele liga/
+// desliga a câmara, põe o vídeo em pausa, ou muda o microfone — é isto que
+// faz o LiveStageStrip mostrar a foto/logótipo correctos para TODOS os
+// espectadores, e não só no ecrã do próprio convidado.
+export async function atualizarEstadoConvidado(liveId, uid, estado = {}) {
+  if (!liveId || !uid) return;
+  const dados = {};
+  if (typeof estado.cameraDesligada === 'boolean') dados.cameraDesligada = estado.cameraDesligada;
+  if (typeof estado.videoPausado === 'boolean') dados.videoPausado = estado.videoPausado;
+  if (typeof estado.microfoneDesligado === 'boolean') dados.microfoneDesligado = estado.microfoneDesligado;
+  if (Object.keys(dados).length === 0) return;
+  await updateDoc(doc(db, 'lives', liveId, 'palco', uid), dados).catch(() => {});
 }
 
 // --- Reações (gostos) ---------------------------------------------------------

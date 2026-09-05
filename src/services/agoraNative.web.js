@@ -106,6 +106,16 @@ class WebAgoraEngine {
 
   disableVideo() { try { this.localVideoTrack?.setEnabled(false); } catch (_) {} }
 
+  // ── CORREÇÃO ──
+  // Simétrico a enableLocalAudio, mas faltava para vídeo. Sem isto,
+  // desligar a câmara (disableVideo, acima) e depois tentar voltar a
+  // ligá-la nunca reactivava mesmo a track existente — enableVideo() só
+  // cria uma track NOVA se ainda não existir nenhuma; se já existir (só
+  // desactivada), não fazia nada, e a câmara ficava permanentemente
+  // desligada mesmo depois de "ligar" de novo. Este método é chamado
+  // pelo AgoraEngine.js sempre que a câmara é (re)ligada.
+  enableLocalVideo(ativo) { try { this.localVideoTrack?.setEnabled(!!ativo); } catch (_) {} }
+
   _pararTracksLocais() {
     try { this.localAudioTrack?.close(); } catch (_) {}
     try { this.localVideoTrack?.close(); } catch (_) {}
@@ -130,15 +140,59 @@ export function createAgoraRtcEngine() {
 }
 
 // Renderiza vídeo local/remoto no web — usado por broadcast.jsx,
-// sala-entrevista.jsx e watch/[id].jsx (não pelo saber.jsx, que é só áudio).
+// LiveStageStrip.jsx, sala-entrevista.jsx e watch/[id].jsx (não pelo
+// saber.jsx, que é só áudio).
+//
+// ── CORREÇÃO 1 ──
+// Este componente esperava receber `uid` e `local` directamente como
+// propriedades separadas, mas em todo o resto da app (broadcast.jsx,
+// LiveStageStrip.jsx) é sempre chamado com `canvas={{ uid, sourceType }}`
+// — o mesmo formato da API nativa do Agora (react-native-agora), para o
+// código funcionar sem alterações entre nativo e web. Como nunca recebia
+// `uid`/`local` (estavam escondidos dentro de `canvas`), nunca sabia que
+// vídeo mostrar, e a câmara ficava sempre em branco na web.
+//
+// ── CORREÇÃO 2 ──
+// O useEffect corria sem array de dependências e, em cada execução,
+// parava (`stop()`) e voltava a tocar (`play()`) a track — mesmo que
+// fosse exactamente a MESMA track já a tocar. Durante uma live, o ecrã
+// do anfitrião re-renderiza com muita frequência (cada comentário, cada
+// reação de um espectador), o que fazia isto correr constantemente e
+// quebrava o preview LOCAL (parar+voltar a tocar a câmara sem parar). O
+// vídeo remoto que o espectador vê não tinha este problema porque é
+// outro componente. Agora só pára/reinicia a reprodução quando a track
+// realmente muda (ex: ligar a câmara de novo, ou o utilizador remoto
+// mudar) — nunca por causa de um re-render que não tem nada a ver com o
+// vídeo.
 import { useEffect, useRef } from 'react';
-export function RtcSurfaceView({ style, uid, local }) {
-  const ref = useRef(null);
+export function RtcSurfaceView({ style, canvas }) {
+  const containerRef = useRef(null);
+  const trackAtualRef = useRef(null);
+  const uid = canvas?.uid;
+  const ehLocal = canvas?.sourceType === VideoSourceType.VideoSourceCamera;
+
   useEffect(() => {
     const engine = createAgoraRtcEngine();
-    const track = local ? engine.localVideoTrack : engine.remoteUsers[uid]?.videoTrack;
-    if (track && ref.current) track.play(ref.current);
-    return () => { try { track?.stop(); } catch (_) {} };
+    const track = ehLocal ? engine.localVideoTrack : engine.remoteUsers[uid]?.videoTrack;
+
+    if (track && containerRef.current && trackAtualRef.current !== track) {
+      if (trackAtualRef.current) {
+        try { trackAtualRef.current.stop(); } catch (_) {}
+      }
+      track.play(containerRef.current);
+      trackAtualRef.current = track;
+    }
+    // Sem array de dependências: continua a verificar em cada render (a
+    // track pode só ficar disponível um pouco depois do primeiro mount),
+    // mas o "if" acima garante que só age de facto quando a track muda.
   });
-  return <div ref={ref} style={{ width: '100%', height: '100%', ...style }} />;
+
+  useEffect(() => {
+    return () => {
+      try { trackAtualRef.current?.stop(); } catch (_) {}
+      trackAtualRef.current = null;
+    };
+  }, []);
+
+  return <div ref={containerRef} style={{ width: '100%', height: '100%', ...style }} />;
 }

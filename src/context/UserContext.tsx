@@ -9,6 +9,7 @@ import {
   useContext, useEffect, useRef, useState,
 } from 'react';
 import { auth, db } from '../config/firebase';
+import { traduzir } from '../i18n/translations';
 
 export interface Perfil {
   nome: string;
@@ -65,6 +66,14 @@ export interface Perfil {
   emailVerificado?: boolean;
   telVerificado?: boolean;
   tipoPerfil?: string;
+  // Usados em sincronizarDadosGlobais() para marcar autorVerificado nos
+  // posts/histórias — nomes legados, mantidos tal como já eram gravados.
+  verificado?: boolean;
+  isVerified?: boolean;
+  // ── Idioma da app (código: 'pt' | 'en' | 'fr' | 'es') ──
+  // Ver i18n/translations.js — usado para calcular `idioma` e `t()`
+  // expostos por este contexto.
+  idiomaPerfil?: string;
 }
 
 // ── Dados da Página da Empresa (users/{uid}/perfis/empresa) ──
@@ -133,6 +142,13 @@ interface UserContextType {
   perfilExibido: PerfilExibido;
   trocarContexto: (contexto: ContextoAtivo) => Promise<boolean>;
   guardarPerfilEmpresa: (dados: Partial<PerfilEmpresa>) => Promise<void>;
+  // ── Idioma / traduções ──
+  // idioma: código actual ('pt'|'en'|'fr'|'es'), derivado de
+  // perfil.idiomaPerfil (por omissão 'pt').
+  // t: função de tradução já associada a esse idioma — usar como
+  // t('alguma_chave') em qualquer ecrã que consuma useUser().
+  idioma: string;
+  t: (chave: string, ...args: any[]) => string;
 }
 
 const perfilInicial: Perfil = {
@@ -151,6 +167,7 @@ const perfilInicial: Perfil = {
   uriCartaConducao: null, uriPortefolio: null, uriDiploma: null,
   linkedin: '', github: '', behance: '', website: '',
   emailVerificado: false, telVerificado: false, tipoPerfil: '',
+  idiomaPerfil: 'pt',
 };
 
 const perfilExibidoInicial: PerfilExibido = {
@@ -172,6 +189,8 @@ const UserContext = createContext<UserContextType>({
   perfilExibido: perfilExibidoInicial,
   trocarContexto: async () => false,
   guardarPerfilEmpresa: async () => {},
+  idioma: 'pt',
+  t: (chave: string) => chave,
 });
 
 export function interpretarEstadoConta(dados: any): DadosConta | null {
@@ -350,6 +369,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
           emailVerificado:   dados.emailVerificado   || false,
           telVerificado:     dados.telVerificado     || false,
           tipoPerfil:        dados.tipoPerfil        || '',
+          idiomaPerfil:      dados.idiomaPerfil      || 'pt',
         };
 
         setPerfil(p);
@@ -426,6 +446,17 @@ export function UserProvider({ children }: { children: ReactNode }) {
         fotoURL: perfil.fotoURL ?? null,
         bio: perfil.bio || perfil.resumo || '',
       };
+
+  // ── Idioma / traduções ──
+  // Código actual, derivado de perfil.idiomaPerfil (guardado em
+  // configuracoes.jsx). t() está pré-associado a este idioma, para que
+  // qualquer ecrã só precise de chamar t('chave') sem se preocupar com
+  // qual dicionário usar.
+  const idioma = perfil?.idiomaPerfil || 'pt';
+  const t = useCallback(
+    (chave: string, ...args: any[]) => traduzir(idioma, chave, ...args),
+    [idioma]
+  );
 
   const sincronizarDadosGlobais = async (uid: string, dados: Partial<Perfil>) => {
     const camposPost: any = {};
@@ -596,6 +627,8 @@ export function UserProvider({ children }: { children: ReactNode }) {
       perfilExibido,
       trocarContexto,
       guardarPerfilEmpresa,
+      idioma,
+      t,
     }}>
       {children}
     </UserContext.Provider>
